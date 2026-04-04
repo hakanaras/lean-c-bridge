@@ -45,7 +45,7 @@ pub enum ParameterSpecialConversion {
     },
     /// Pass a pointer to a newly allocated array containing the elements of a Lean Array, and free it after the call
     Array {
-        /// Optional conversion for the individual elements of the array, e.g. to convert an array of strings into an array of char*
+        /// Optional conversion for the individual elements of the array
         element_conversion: Option<Box<ParameterSpecialConversion>>,
     },
     /// Treat the parameter as an output pointer and add the value it points to to the return value by making it a tuple.
@@ -76,8 +76,8 @@ pub enum ReturnValueSpecialConversion {
         /// Whether to free the char* after converting it.
         free: bool,
     },
-    /// Automatically convert a pointer-to-pointer return value into a Lean Array.
-    /// The first null pointer indicates the end of the array.
+    /// Automatically convert a pointer-to-pointer return value (which is interpreted as a null-terminated array)
+    /// into a Lean Array.
     NullTerminatedArray {
         /// Optional conversion for the pointed value, using the same conversion choices as return values.
         element_conversion: Option<Box<ReturnValueSpecialConversion>>,

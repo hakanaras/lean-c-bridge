@@ -24,7 +24,7 @@ fn main() {
                 name,
                 return_type,
                 parameters,
-                is_variadic: _,
+                is_variadic: false,
             } => Some(CFunction {
                 name: name.clone(),
                 return_type: return_type.clone(),

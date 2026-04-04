@@ -18,6 +18,10 @@ pub struct App {
 
     // Function list
     pub list_selected: usize,
+    pub list_search_active: bool,
+    pub list_search_buffer: Vec<char>,
+    pub list_search_cursor: usize,
+    pub list_search_status: Option<String>,
 
     // Form
     pub form_function_index: usize,
@@ -84,6 +88,10 @@ impl App {
             choices,
             should_quit: false,
             list_selected: 0,
+            list_search_active: false,
+            list_search_buffer: Vec::new(),
+            list_search_cursor: 0,
+            list_search_status: None,
             form_function_index: 0,
             form_choices: FunctionChoices {
                 name: String::new(),
@@ -115,6 +123,11 @@ impl App {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) {
+        if self.list_search_active {
+            self.handle_list_search_key(key);
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.should_quit = true;
@@ -147,8 +160,118 @@ impl App {
                     self.enter_form();
                 }
             }
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                self.start_list_search();
+            }
             _ => {}
         }
+    }
+
+    fn handle_list_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.clear_list_search();
+            }
+            KeyCode::Enter => {
+                if self.list_search_buffer.is_empty() || self.apply_list_search_selection() {
+                    self.clear_list_search();
+                } else {
+                    self.list_search_status = Some(format!(
+                        "No function matches \"{}\"",
+                        self.list_search_query()
+                    ));
+                }
+            }
+            KeyCode::Backspace => {
+                if self.list_search_cursor > 0 {
+                    self.list_search_cursor -= 1;
+                    self.list_search_buffer.remove(self.list_search_cursor);
+                    self.refresh_list_search();
+                }
+            }
+            KeyCode::Delete => {
+                if self.list_search_cursor < self.list_search_buffer.len() {
+                    self.list_search_buffer.remove(self.list_search_cursor);
+                    self.refresh_list_search();
+                }
+            }
+            KeyCode::Left => {
+                if self.list_search_cursor > 0 {
+                    self.list_search_cursor -= 1;
+                }
+            }
+            KeyCode::Right => {
+                if self.list_search_cursor < self.list_search_buffer.len() {
+                    self.list_search_cursor += 1;
+                }
+            }
+            KeyCode::Home => {
+                self.list_search_cursor = 0;
+            }
+            KeyCode::End => {
+                self.list_search_cursor = self.list_search_buffer.len();
+            }
+            KeyCode::Char(c) => {
+                self.list_search_buffer.insert(self.list_search_cursor, c);
+                self.list_search_cursor += 1;
+                self.refresh_list_search();
+            }
+            _ => {}
+        }
+    }
+
+    fn start_list_search(&mut self) {
+        self.list_search_active = true;
+        self.list_search_buffer.clear();
+        self.list_search_cursor = 0;
+        self.list_search_status = None;
+    }
+
+    fn clear_list_search(&mut self) {
+        self.list_search_active = false;
+        self.list_search_buffer.clear();
+        self.list_search_cursor = 0;
+        self.list_search_status = None;
+    }
+
+    fn refresh_list_search(&mut self) {
+        if self.list_search_buffer.is_empty() {
+            self.list_search_status = None;
+            return;
+        }
+
+        if self.apply_list_search_selection() {
+            self.list_search_status = None;
+        } else {
+            self.list_search_status = Some(format!(
+                "No function matches \"{}\"",
+                self.list_search_query()
+            ));
+        }
+    }
+
+    fn apply_list_search_selection(&mut self) -> bool {
+        let query = self.list_search_query();
+        let query = query.trim();
+        if query.is_empty() {
+            return false;
+        }
+
+        let needle = query.to_ascii_lowercase();
+        if let Some(index) = self
+            .functions
+            .iter()
+            .position(|function| function.name.to_ascii_lowercase().contains(&needle))
+        {
+            self.list_selected = index;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn list_search_query(&self) -> String {
+        self.list_search_buffer.iter().collect()
     }
 
     fn enter_form(&mut self) {

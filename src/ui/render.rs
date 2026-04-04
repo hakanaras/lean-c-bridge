@@ -32,6 +32,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
 }
 
 fn render_function_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let chunks = if app.list_search_active {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(4)])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0)])
+            .split(area)
+    };
+
     let items: Vec<ListItem> = app
         .functions
         .iter()
@@ -61,7 +73,53 @@ fn render_function_list(f: &mut Frame, app: &mut App, area: Rect) {
     let mut state = ListState::default();
     state.select(Some(app.list_selected));
 
-    f.render_stateful_widget(list, area, &mut state);
+    f.render_stateful_widget(list, chunks[0], &mut state);
+
+    if app.list_search_active {
+        render_function_search(f, app, chunks[1]);
+    }
+}
+
+fn render_function_search(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default().borders(Borders::ALL).title("Find Function");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let before: String = app.list_search_buffer[..app.list_search_cursor].iter().collect();
+    let cursor_ch = app
+        .list_search_buffer
+        .get(app.list_search_cursor)
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| " ".to_string());
+    let after: String = if app.list_search_cursor < app.list_search_buffer.len() {
+        app.list_search_buffer[app.list_search_cursor + 1..]
+            .iter()
+            .collect()
+    } else {
+        String::new()
+    };
+
+    let query_line = Line::from(vec![
+        Span::raw(" Query: "),
+        Span::raw(before),
+        Span::styled(
+            cursor_ch,
+            Style::default().bg(Color::White).fg(Color::Black),
+        ),
+        Span::raw(after),
+    ]);
+
+    let status = app
+        .list_search_status
+        .as_deref()
+        .unwrap_or("Enter confirms the current match");
+    let status_line = Line::from(vec![Span::styled(
+        status,
+        Style::default().fg(Color::DarkGray),
+    )]);
+
+    let paragraph = Paragraph::new(vec![query_line, status_line]);
+    f.render_widget(paragraph, inner);
 }
 
 fn render_form(f: &mut Frame, app: &mut App, area: Rect) {
@@ -225,13 +283,26 @@ fn render_preview(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_keybindings(f: &mut Frame, app: &App, area: Rect) {
     let bindings: Vec<(&str, &str)> = match app.view {
-        View::FunctionList => vec![
-            ("↑/↓", "Navigate"),
-            ("PgUp/PgDn", "Page navigate"),
-            ("Home/End", "Jump to start/end"),
-            ("Enter", "Edit function"),
-            ("q/Esc", "Save & Quit"),
-        ],
+        View::FunctionList => {
+            if app.list_search_active {
+                vec![
+                    ("Type", "Search by name"),
+                    ("←/→", "Move cursor"),
+                    ("Backspace", "Delete character"),
+                    ("Enter", "Jump to match"),
+                    ("Esc", "Cancel search"),
+                ]
+            } else {
+                vec![
+                    ("↑/↓", "Navigate"),
+                    ("PgUp/PgDn", "Page navigate"),
+                    ("Home/End", "Jump to start/end"),
+                    ("F", "Find function"),
+                    ("Enter", "Edit function"),
+                    ("q/Esc", "Save & Quit"),
+                ]
+            }
+        }
         View::FunctionForm => {
             if app.editing_text {
                 vec![

@@ -1188,7 +1188,10 @@ fn prepare_string_buffer_parameter(
 
     let size_var = name_gen.next(&format!("{}_string_buffer_size", parameter_name));
     let buffer_var = name_gen.next(&format!("{}_string_buffer", parameter_name));
-    let return_strategy = ReturnValueSpecialConversion::String { free: true };
+    let return_strategy = ReturnValueSpecialConversion::String {
+        free: true,
+        free_function: None,
+    };
     let lean_return_ty =
         lean_type_for_return(lean_ctx, c_ctx, registry, ty, Some(&return_strategy))?;
 
@@ -1635,14 +1638,22 @@ fn prepare_return_value(
         });
     }
 
-    if let Some(ReturnValueSpecialConversion::String { free }) = strategy {
+    if let Some(ReturnValueSpecialConversion::String {
+        free,
+        free_function,
+    }) = strategy
+    {
         if !registry.is_char_pointer_like(ty) {
             return Err("string return conversion requires a char* return type".to_string());
         }
         let result_var = name_gen.next("lean_result");
         let mut post = Vec::new();
         if *free {
-            post.push(format!("free((void *){});", c_expr.unwrap()));
+            post.push(format!(
+                "{}((void *){});",
+                deallocator_name(free_function.as_deref()),
+                c_expr.unwrap()
+            ));
         }
         return Ok(PreparedValue {
             pre: vec![format!(
@@ -1660,6 +1671,7 @@ fn prepare_return_value(
     if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
         element_conversion,
         free_array_after_conversion,
+        free_function,
     }) = strategy
     {
         let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
@@ -1730,7 +1742,11 @@ fn prepare_return_value(
 
         let mut post = Vec::new();
         if *free_array_after_conversion {
-            post.push(format!("free((void *){});", c_expr.unwrap()));
+            post.push(format!(
+                "{}((void *){});",
+                deallocator_name(free_function.as_deref()),
+                c_expr.unwrap()
+            ));
         }
 
         return Ok(PreparedValue {
@@ -2152,6 +2168,13 @@ fn sanitize_lean_ctor_name(name: &str) -> String {
         sanitized = "other_".to_string();
     }
     sanitized
+}
+
+fn deallocator_name(free_function: Option<&str>) -> &str {
+    match free_function.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => name,
+        None => "free",
+    }
 }
 
 fn is_lean_keyword(name: &str) -> bool {

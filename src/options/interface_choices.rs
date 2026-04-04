@@ -75,6 +75,10 @@ pub enum ReturnValueSpecialConversion {
     String {
         /// Whether to free the char* after converting it.
         free: bool,
+        /// Function that should be used to free the char*.
+        /// When left empty, it defaults to `free` from the C standard library.
+        /// Only has an effect if `free` is true.
+        free_function: Option<String>,
     },
     /// Automatically convert a pointer-to-pointer return value (which is interpreted as a null-terminated array)
     /// into a Lean Array.
@@ -84,5 +88,9 @@ pub enum ReturnValueSpecialConversion {
         /// Whether to free the top-level array after converting it.
         #[serde(default)]
         free_array_after_conversion: bool,
+        /// Function that should be used to free the array.
+        /// When left empty, it defaults to `free` from the C standard library.
+        /// Only has an effect if `free_array_after_conversion` is true.
+        free_function: Option<String>
     },
 }

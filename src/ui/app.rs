@@ -68,6 +68,7 @@ pub enum FormPath {
     ParamElementConversion(usize),
     ParamOutConversion(usize),
     ParamOutStringFree(usize),
+    ParamOutStringFreeFunction(usize),
     ParamLengthOf(usize),
     ParamStaticExpr(usize),
     ParamStaticPreStmt(usize),
@@ -76,7 +77,10 @@ pub enum FormPath {
     ReturnElementConversion,
     ReturnArrayFree,
     ReturnStringFree,
+    ReturnStringFreeFunction,
+    ReturnArrayFreeFunction,
     ReturnElementStringFree,
+    ReturnElementStringFreeFunction,
 }
 
 impl App {
@@ -428,7 +432,10 @@ impl App {
                                 indent: 2,
                             });
 
-                            if let Some(ReturnValueSpecialConversion::String { free }) =
+                            if let Some(ReturnValueSpecialConversion::String {
+                                free,
+                                free_function,
+                            }) =
                                 element_conversion.as_deref()
                             {
                                 items.push(FormItem {
@@ -440,6 +447,18 @@ impl App {
                                     path: FormPath::ParamOutStringFree(i),
                                     indent: 3,
                                 });
+
+                                if *free {
+                                    items.push(FormItem {
+                                        label: "Free function".to_string(),
+                                        kind: FormItemKind::TextInput {
+                                            value: free_function.clone().unwrap_or_default(),
+                                            enabled: !omit,
+                                        },
+                                        path: FormPath::ParamOutStringFreeFunction(i),
+                                        indent: 4,
+                                    });
+                                }
                             }
                         }
                         ParameterSpecialConversion::Length { of_param_index } => {
@@ -529,7 +548,11 @@ impl App {
                 indent: 1,
             });
 
-            if let Some(ReturnValueSpecialConversion::String { free }) = &choices.return_value {
+            if let Some(ReturnValueSpecialConversion::String {
+                free,
+                free_function,
+            }) = &choices.return_value
+            {
                 items.push(FormItem {
                     label: "Free after conversion".to_string(),
                     kind: FormItemKind::Checkbox {
@@ -539,11 +562,24 @@ impl App {
                     path: FormPath::ReturnStringFree,
                     indent: 2,
                 });
+
+                if *free {
+                    items.push(FormItem {
+                        label: "Free function".to_string(),
+                        kind: FormItemKind::TextInput {
+                            value: free_function.clone().unwrap_or_default(),
+                            enabled: !omit,
+                        },
+                        path: FormPath::ReturnStringFreeFunction,
+                        indent: 3,
+                    });
+                }
             }
 
             if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
                 element_conversion,
                 free_array_after_conversion,
+                free_function,
             }) = &choices.return_value
             {
                 items.push(FormItem {
@@ -555,6 +591,18 @@ impl App {
                     path: FormPath::ReturnArrayFree,
                     indent: 2,
                 });
+
+                if *free_array_after_conversion {
+                    items.push(FormItem {
+                        label: "Free function".to_string(),
+                        kind: FormItemKind::TextInput {
+                            value: free_function.clone().unwrap_or_default(),
+                            enabled: !omit,
+                        },
+                        path: FormPath::ReturnArrayFreeFunction,
+                        indent: 3,
+                    });
+                }
 
                 let element_ty = get_pointee(&func.return_type);
                 let element_options = return_conversion_options(element_ty);
@@ -574,7 +622,11 @@ impl App {
                     indent: 2,
                 });
 
-                if let Some(ReturnValueSpecialConversion::String { free }) = element_conversion.as_deref() {
+                if let Some(ReturnValueSpecialConversion::String {
+                    free,
+                    free_function,
+                }) = element_conversion.as_deref()
+                {
                     items.push(FormItem {
                         label: "Free element after conversion".to_string(),
                         kind: FormItemKind::Checkbox {
@@ -584,6 +636,18 @@ impl App {
                         path: FormPath::ReturnElementStringFree,
                         indent: 3,
                     });
+
+                    if *free {
+                        items.push(FormItem {
+                            label: "Free function".to_string(),
+                            kind: FormItemKind::TextInput {
+                                value: free_function.clone().unwrap_or_default(),
+                                enabled: !omit,
+                            },
+                            path: FormPath::ReturnElementStringFreeFunction,
+                            indent: 4,
+                        });
+                    }
                 }
             }
         } else {
@@ -734,7 +798,10 @@ impl App {
                 self.form_choices.no_io = checked;
             }
             FormPath::ReturnStringFree => {
-                if let Some(ReturnValueSpecialConversion::String { ref mut free }) =
+                if let Some(ReturnValueSpecialConversion::String {
+                    ref mut free,
+                    ..
+                }) =
                     self.form_choices.return_value
                 {
                     *free = checked;
@@ -755,7 +822,7 @@ impl App {
                     ..
                 }) = self.form_choices.return_value.as_mut()
                 {
-                    if let Some(ReturnValueSpecialConversion::String { free }) =
+                    if let Some(ReturnValueSpecialConversion::String { free, .. }) =
                         element_conversion.as_deref_mut()
                     {
                         *free = checked;
@@ -768,7 +835,7 @@ impl App {
                         .conversion_strategy
                         .as_mut()
                 {
-                    if let Some(ReturnValueSpecialConversion::String { free }) =
+                    if let Some(ReturnValueSpecialConversion::String { free, .. }) =
                         element_conversion.as_deref_mut()
                     {
                         *free = checked;
@@ -836,6 +903,7 @@ impl App {
                         *element_conversion = match option {
                             "String" => Some(Box::new(ReturnValueSpecialConversion::String {
                                 free: false,
+                                free_function: None,
                             })),
                             _ => None,
                         };
@@ -855,11 +923,15 @@ impl App {
             }
             FormPath::ReturnConversion => {
                 self.form_choices.return_value = match option {
-                    "String" => Some(ReturnValueSpecialConversion::String { free: false }),
+                    "String" => Some(ReturnValueSpecialConversion::String {
+                        free: false,
+                        free_function: None,
+                    }),
                     "NullTerminatedArray" => Some(
                         ReturnValueSpecialConversion::NullTerminatedArray {
                             element_conversion: None,
                             free_array_after_conversion: false,
+                            free_function: None,
                         },
                     ),
                     _ => None,
@@ -874,11 +946,13 @@ impl App {
                     *element_conversion = match option {
                         "String" => Some(Box::new(ReturnValueSpecialConversion::String {
                             free: false,
+                            free_function: None,
                         })),
                         "NullTerminatedArray" => Some(Box::new(
                             ReturnValueSpecialConversion::NullTerminatedArray {
                                 element_conversion: None,
                                 free_array_after_conversion: false,
+                                free_function: None,
                             },
                         )),
                         _ => None,
@@ -977,6 +1051,52 @@ impl App {
                     } else {
                         value.split("; ").map(String::from).collect()
                     };
+                }
+            }
+            FormPath::ParamOutStringFreeFunction(i) => {
+                if let Some(ParameterSpecialConversion::Out { element_conversion }) =
+                    self.form_choices.parameters[i].conversion_strategy.as_mut()
+                {
+                    if let Some(ReturnValueSpecialConversion::String {
+                        free_function,
+                        ..
+                    }) = element_conversion.as_deref_mut()
+                    {
+                        *free_function = optional_function_name(&value);
+                    }
+                }
+            }
+            FormPath::ReturnStringFreeFunction => {
+                if let Some(ReturnValueSpecialConversion::String {
+                    free_function,
+                    ..
+                }) = self.form_choices.return_value.as_mut()
+                {
+                    *free_function = optional_function_name(&value);
+                }
+            }
+            FormPath::ReturnArrayFreeFunction => {
+                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
+                    free_function,
+                    ..
+                }) = self.form_choices.return_value.as_mut()
+                {
+                    *free_function = optional_function_name(&value);
+                }
+            }
+            FormPath::ReturnElementStringFreeFunction => {
+                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
+                    element_conversion,
+                    ..
+                }) = self.form_choices.return_value.as_mut()
+                {
+                    if let Some(ReturnValueSpecialConversion::String {
+                        free_function,
+                        ..
+                    }) = element_conversion.as_deref_mut()
+                    {
+                        *free_function = optional_function_name(&value);
+                    }
                 }
             }
             _ => {}
@@ -1249,4 +1369,13 @@ fn is_pointer_to_pointer(ty: &CType) -> bool {
 
 fn is_pointer_like(ty: &CType) -> bool {
     matches!(ty, CType::Pointer { .. } | CType::IncompleteArray { .. } | CType::Array { size: None, .. })
+}
+
+fn optional_function_name(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }

@@ -1,0 +1,423 @@
+{
+  "functions": [
+    {
+      "name": "no_io_bool_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_char_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_signed_char_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_unsigned_char_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_signed_short_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_unsigned_short_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_signed_int_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_unsigned_int_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_signed_long_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_unsigned_long_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_signed_long_long_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_unsigned_long_long_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_size_t_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_ptrdiff_t_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_float_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_double_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "no_io_long_double_pass_through",
+      "omit": false,
+      "no_io": true,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "dynamic_array_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Array": {
+              "element_conversion": null
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "lit_string_return",
+      "omit": false,
+      "no_io": false,
+      "parameters": [],
+      "return_value": {
+        "String": {
+          "free": false
+        }
+      }
+    },
+    {
+      "name": "alloc_string_return",
+      "omit": false,
+      "no_io": false,
+      "parameters": [],
+      "return_value": {
+        "String": {
+          "free": true
+        }
+      }
+    },
+    {
+      "name": "string_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": "String"
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "string_take_with_length",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": "String"
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "omitted",
+      "omit": true,
+      "no_io": false,
+      "parameters": [],
+      "return_value": null
+    },
+    {
+      "name": "static_expr_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "StaticExpr": {
+              "pre_statements": [],
+              "expr": "42",
+              "post_statements": []
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "out_tuple_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        },
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": null
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "String": {
+                  "free": true
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "out_only_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": null
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": null
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "string_buffer_without_length_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "StringBuffer": {
+              "buffer_size": 27
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "string_buffer_with_length_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "StringBuffer": {
+              "buffer_size": 14
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "dynamic_string_array_return",
+      "omit": false,
+      "no_io": false,
+      "parameters": [],
+      "return_value": {
+        "NullTerminatedArray": {
+          "element_conversion": {
+            "String": {
+              "free": false
+            }
+          },
+          "free_array_after_conversion": true
+        }
+      }
+    },
+    {
+      "name": "array_and_string_return",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "StringBuffer": {
+              "buffer_size": 1
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "NullTerminatedArray": {
+          "element_conversion": {
+            "String": {
+              "free": false
+            }
+          },
+          "free_array_after_conversion": true
+        }
+      }
+    }
+  ]
+}

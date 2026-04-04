@@ -128,12 +128,14 @@ def test_enums : IO Unit := do
 def test_arrays : IO Unit := do
   assert! (<- static_array_return).arr == #[1, 2, 3, 4]
   dynamic_array_take #[1, 2, 3, 4]
+  dynamic_string_array_take #["Hello", "World"]
   static_array_take #[1, 2, 3, 4]
   let a1 <- dynamic_string_array_return
   assert! a1 == #["Hello", "World"]
   let (a2, str) <- array_and_string_return
   assert! a2 == #["Hello", "World"]
   assert! str == ""
+
 
 def test_structs : IO Unit := do
   let s1 <- struct_return

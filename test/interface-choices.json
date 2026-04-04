@@ -418,6 +418,28 @@
           "free_array_after_conversion": true
         }
       }
+    },
+    {
+      "name": "dynamic_string_array_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Array": {
+              "element_conversion": "String"
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": null
     }
   ]
 }

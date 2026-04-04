@@ -388,6 +388,13 @@ static inline void dynamic_array_take(int* array, size_t length) {
     assert(array[3] == 4);
 }
 
+static inline void dynamic_string_array_take(char** array, size_t length) {
+    assert(length == 2);
+    assert(strcmp(array[0], "Hello") == 0);
+    assert(strcmp(array[1], "World") == 0);
+    assert(array[2] == NULL);
+}
+
 static inline char** dynamic_string_array_return() {
     char** arr = malloc(3 * sizeof(char*));
     arr[0] = "Hello";

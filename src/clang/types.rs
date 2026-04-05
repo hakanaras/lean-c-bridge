@@ -69,6 +69,7 @@ pub enum CDeclaration {
         name: Option<String>,
         fields: Vec<CField>,
     },
+    #[allow(dead_code)]
     Union {
         name: Option<String>,
         fields: Vec<CField>,
@@ -81,10 +82,12 @@ pub enum CDeclaration {
         name: String,
         underlying_type: CType,
     },
+    #[allow(dead_code)]
     Variable {
         name: String,
         ty: CType,
     },
+    #[allow(dead_code)]
     Macro {
         name: String,
     },

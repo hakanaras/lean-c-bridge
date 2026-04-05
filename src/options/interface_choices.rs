@@ -91,6 +91,6 @@ pub enum ReturnValueSpecialConversion {
         /// Function that should be used to free the array.
         /// When left empty, it defaults to `free` from the C standard library.
         /// Only has an effect if `free_array_after_conversion` is true.
-        free_function: Option<String>
+        free_function: Option<String>,
     },
 }

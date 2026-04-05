@@ -20,9 +20,8 @@ fn main() {
     }
 
     match std::fs::read_to_string(&path).and_then(|json| {
-        serde_json::from_str::<InterfaceChoices>(&json).map_err(|error| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, error)
-        })
+        serde_json::from_str::<InterfaceChoices>(&json)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
     }) {
         Ok(_) => {
             println!("{path} is valid InterfaceChoices JSON");

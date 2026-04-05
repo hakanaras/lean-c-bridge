@@ -58,11 +58,7 @@ fn render_function_list(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Functions"),
-        )
+        .block(Block::default().borders(Borders::ALL).title("Functions"))
         .highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
@@ -81,11 +77,15 @@ fn render_function_list(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn render_function_search(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title("Find Function");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Find Function");
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let before: String = app.list_search_buffer[..app.list_search_cursor].iter().collect();
+    let before: String = app.list_search_buffer[..app.list_search_cursor]
+        .iter()
+        .collect();
     let cursor_ch = app
         .list_search_buffer
         .get(app.list_search_cursor)
@@ -207,7 +207,11 @@ fn render_form_item(
         }
         FormItemKind::Checkbox { checked, enabled } => {
             let check = if *checked { "x" } else { " " };
-            let style = if !enabled { disabled_style } else { focus_style };
+            let style = if !enabled {
+                disabled_style
+            } else {
+                focus_style
+            };
             let prefix = if focused { "▸ " } else { "  " };
             let text = format!("{}[{}] {}", prefix, check, item.label);
             f.render_widget(Paragraph::new(text).style(style), area);
@@ -218,13 +222,21 @@ fn render_form_item(
             enabled,
         } => {
             let value = options.get(*selected).map(|s| s.as_str()).unwrap_or("?");
-            let style = if !enabled { disabled_style } else { focus_style };
+            let style = if !enabled {
+                disabled_style
+            } else {
+                focus_style
+            };
             let prefix = if focused { "▸ " } else { "  " };
             let text = format!("{}{}: ◀ {} ▶", prefix, item.label, value);
             f.render_widget(Paragraph::new(text).style(style), area);
         }
         FormItemKind::TextInput { value, enabled } => {
-            let style = if !enabled { disabled_style } else { focus_style };
+            let style = if !enabled {
+                disabled_style
+            } else {
+                focus_style
+            };
             let prefix = if focused { "▸ " } else { "  " };
 
             if editing {
@@ -263,9 +275,7 @@ fn render_form_item(
 }
 
 fn render_preview(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Preview");
+    let block = Block::default().borders(Borders::ALL).title("Preview");
     let preview_lines = block.inner(area).height as usize;
     let preview = app
         .preview_target()
@@ -337,9 +347,7 @@ fn render_keybindings(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Keybindings");
+    let block = Block::default().borders(Borders::ALL).title("Keybindings");
     let paragraph = Paragraph::new(lines).block(block);
     f.render_widget(paragraph, area);
 }

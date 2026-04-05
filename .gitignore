@@ -2,3 +2,5 @@
 /output
 /scripts
 /target
+*.prompt.md
+opencode.json

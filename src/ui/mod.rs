@@ -11,9 +11,9 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
+use crate::clang::types::CFunction;
 use crate::generator::TypeRegistry;
 use crate::options::interface_choices::InterfaceChoices;
-use crate::clang::types::CFunction;
 
 use app::App;
 

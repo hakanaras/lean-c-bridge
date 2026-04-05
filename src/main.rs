@@ -9,7 +9,10 @@ mod generator;
 mod options;
 mod ui;
 
-const HELPER_FUNCTIONS_C: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/static/helper_functions.c"));
+const HELPER_FUNCTIONS_C: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/static/helper_functions.c"
+));
 
 fn main() {
     let options = Options::parse();
@@ -36,7 +39,12 @@ fn main() {
         .collect();
 
     let choices = if options.ui {
-        let choices = ui::run(options.interface_choices, functions.clone(), registry.clone()).unwrap();
+        let choices = ui::run(
+            options.interface_choices,
+            functions.clone(),
+            registry.clone(),
+        )
+        .unwrap();
         if !options.dont_save_interface_choices {
             choices
                 .save(&format!(

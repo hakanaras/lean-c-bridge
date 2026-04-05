@@ -84,7 +84,11 @@ pub enum FormPath {
 }
 
 impl App {
-    pub fn new(choices: InterfaceChoices, functions: Vec<CFunction>, registry: TypeRegistry) -> Self {
+    pub fn new(
+        choices: InterfaceChoices,
+        functions: Vec<CFunction>,
+        registry: TypeRegistry,
+    ) -> Self {
         Self {
             view: View::FunctionList,
             functions,
@@ -435,8 +439,7 @@ impl App {
                             if let Some(ReturnValueSpecialConversion::String {
                                 free,
                                 free_function,
-                            }) =
-                                element_conversion.as_deref()
+                            }) = element_conversion.as_deref()
                             {
                                 items.push(FormItem {
                                     label: "Free after conversion".to_string(),
@@ -798,10 +801,7 @@ impl App {
                 self.form_choices.no_io = checked;
             }
             FormPath::ReturnStringFree => {
-                if let Some(ReturnValueSpecialConversion::String {
-                    ref mut free,
-                    ..
-                }) =
+                if let Some(ReturnValueSpecialConversion::String { ref mut free, .. }) =
                     self.form_choices.return_value
                 {
                     *free = checked;
@@ -853,9 +853,9 @@ impl App {
                 if i < self.form_choices.parameters.len() {
                     self.form_choices.parameters[i].conversion_strategy = match option {
                         "String" => Some(ParameterSpecialConversion::String),
-                        "StringBuffer" => Some(ParameterSpecialConversion::StringBuffer {
-                            buffer_size: 1024,
-                        }),
+                        "StringBuffer" => {
+                            Some(ParameterSpecialConversion::StringBuffer { buffer_size: 1024 })
+                        }
                         "Array" => Some(ParameterSpecialConversion::Array {
                             element_conversion: None,
                         }),
@@ -863,10 +863,13 @@ impl App {
                             element_conversion: None,
                         }),
                         "Length" => Some(ParameterSpecialConversion::Length {
-                            of_param_index: eligible_length_targets(i, &self.form_choices.parameters)
-                                .into_iter()
-                                .next()
-                                .unwrap_or(0),
+                            of_param_index: eligible_length_targets(
+                                i,
+                                &self.form_choices.parameters,
+                            )
+                            .into_iter()
+                            .next()
+                            .unwrap_or(0),
                         }),
                         "StaticExpr" => Some(ParameterSpecialConversion::StaticExpr {
                             pre_statements: vec![],
@@ -927,13 +930,13 @@ impl App {
                         free: false,
                         free_function: None,
                     }),
-                    "NullTerminatedArray" => Some(
-                        ReturnValueSpecialConversion::NullTerminatedArray {
+                    "NullTerminatedArray" => {
+                        Some(ReturnValueSpecialConversion::NullTerminatedArray {
                             element_conversion: None,
                             free_array_after_conversion: false,
                             free_function: None,
-                        },
-                    ),
+                        })
+                    }
                     _ => None,
                 };
             }
@@ -1010,8 +1013,9 @@ impl App {
 
         match path {
             FormPath::ParamStringBufferSize(i) => {
-                if let Some(ParameterSpecialConversion::StringBuffer { ref mut buffer_size }) =
-                    self.form_choices.parameters[i].conversion_strategy
+                if let Some(ParameterSpecialConversion::StringBuffer {
+                    ref mut buffer_size,
+                }) = self.form_choices.parameters[i].conversion_strategy
                 {
                     if let Ok(parsed) = value.trim().parse::<usize>() {
                         if parsed > 0 {
@@ -1057,20 +1061,16 @@ impl App {
                 if let Some(ParameterSpecialConversion::Out { element_conversion }) =
                     self.form_choices.parameters[i].conversion_strategy.as_mut()
                 {
-                    if let Some(ReturnValueSpecialConversion::String {
-                        free_function,
-                        ..
-                    }) = element_conversion.as_deref_mut()
+                    if let Some(ReturnValueSpecialConversion::String { free_function, .. }) =
+                        element_conversion.as_deref_mut()
                     {
                         *free_function = optional_function_name(&value);
                     }
                 }
             }
             FormPath::ReturnStringFreeFunction => {
-                if let Some(ReturnValueSpecialConversion::String {
-                    free_function,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
+                if let Some(ReturnValueSpecialConversion::String { free_function, .. }) =
+                    self.form_choices.return_value.as_mut()
                 {
                     *free_function = optional_function_name(&value);
                 }
@@ -1090,10 +1090,8 @@ impl App {
                     ..
                 }) = self.form_choices.return_value.as_mut()
                 {
-                    if let Some(ReturnValueSpecialConversion::String {
-                        free_function,
-                        ..
-                    }) = element_conversion.as_deref_mut()
+                    if let Some(ReturnValueSpecialConversion::String { free_function, .. }) =
+                        element_conversion.as_deref_mut()
                     {
                         *free_function = optional_function_name(&value);
                     }
@@ -1368,7 +1366,10 @@ fn is_pointer_to_pointer(ty: &CType) -> bool {
 }
 
 fn is_pointer_like(ty: &CType) -> bool {
-    matches!(ty, CType::Pointer { .. } | CType::IncompleteArray { .. } | CType::Array { size: None, .. })
+    matches!(
+        ty,
+        CType::Pointer { .. } | CType::IncompleteArray { .. } | CType::Array { size: None, .. }
+    )
 }
 
 fn optional_function_name(value: &str) -> Option<String> {

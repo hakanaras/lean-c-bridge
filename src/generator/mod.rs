@@ -983,13 +983,12 @@ fn prepare_string_parameter(
     Ok(PreparedValue {
         pre: vec![
             format!(
-                "size_t {} = lean_string_size({}) - 1;",
-                bytes_var, lean_expr
+                "size_t {} = 0;",
+                bytes_var
             ),
-            format!("char * {} = (char *)malloc({} + 1);", cstr_var, bytes_var),
             format!(
-                "if ({} != NULL) memcpy({}, lean_string_cstr({}), {} + 1); else lean_internal_panic_out_of_memory();",
-                cstr_var, cstr_var, lean_expr, bytes_var
+                "char * {} = lean_ffi_copy_lean_string({}, &{});",
+                cstr_var, lean_expr, bytes_var
             ),
         ],
         expr: cstr_var.clone(),
@@ -1028,12 +1027,8 @@ fn prepare_string_buffer_parameter(
             pre: vec![
                 format!("size_t {} = {};", size_var, buffer_size),
                 format!(
-                    "char * {} = (char *)calloc({}, sizeof(char));",
+                    "char * {} = LEAN_FFI_CALLOC_ARRAY(char, {});",
                     buffer_var, size_var
-                ),
-                format!(
-                    "if ({} == NULL) lean_internal_panic_out_of_memory();",
-                    buffer_var
                 ),
             ],
             expr: buffer_var.clone(),
@@ -1091,21 +1086,13 @@ fn prepare_array_parameter(
     )];
     if is_pointer_element {
         pre.push(format!(
-            "{} * {} = ({} *)malloc(sizeof({}) * ({} + 1));",
-            element_c_ty, data_var, element_c_ty, element_c_ty, len_var
-        ));
-        pre.push(format!(
-            "if ({} == NULL) lean_internal_panic_out_of_memory();",
-            data_var
+            "{} * {} = LEAN_FFI_MALLOC_ARRAY({}, {} + 1);",
+            element_c_ty, data_var, element_c_ty, len_var
         ));
     } else {
         pre.push(format!(
-            "{} * {} = {} == 0 ? NULL : ({} *)malloc(sizeof({}) * {});",
-            element_c_ty, data_var, len_var, element_c_ty, element_c_ty, len_var
-        ));
-        pre.push(format!(
-            "if ({} != 0 && {} == NULL) lean_internal_panic_out_of_memory();",
-            len_var, data_var
+            "{} * {} = LEAN_FFI_MALLOC_ARRAY_OR_NULL({}, {});",
+            element_c_ty, data_var, element_c_ty, len_var
         ));
     }
     pre.push(format!(
@@ -1119,27 +1106,14 @@ fn prepare_array_parameter(
             if !registry.is_char_pointer_like(&element_ty) {
                 return Err("string element conversion requires char* array elements".to_string());
             }
-            let bytes_var = name_gen.next("elem_bytes");
             let string_var = name_gen.next("elem_cstr");
             pre.push(format!(
                 "    lean_object * ffi_elem = lean_array_get_core({}, {});",
                 lean_expr, index_var
             ));
             pre.push(format!(
-                "    size_t {} = lean_string_size(ffi_elem) - 1;",
-                bytes_var
-            ));
-            pre.push(format!(
-                "    char * {} = (char *)malloc({} + 1);",
-                string_var, bytes_var
-            ));
-            pre.push(format!(
-                "    if ({} == NULL) lean_internal_panic_out_of_memory();",
+                "    char * {} = lean_ffi_copy_lean_string(ffi_elem, NULL);",
                 string_var
-            ));
-            pre.push(format!(
-                "    memcpy({}, lean_string_cstr(ffi_elem), {} + 1);",
-                string_var, bytes_var
             ));
             pre.push(format!("    {}[{}] = {};", data_var, index_var, string_var));
 
@@ -1529,7 +1503,7 @@ fn prepare_return_value(
         pre.push(format!("    ++{};", len_var));
         pre.push("}".to_string());
         pre.push(format!(
-            "lean_obj_res {} = lean_mk_empty_array_with_capacity(lean_box({}));",
+            "lean_obj_res {} = lean_ffi_mk_array_with_capacity({});",
             result_var, len_var
         ));
         pre.push(format!(
@@ -1764,7 +1738,7 @@ fn prepare_static_array_return(
     let result_var = name_gen.next("lean_array");
     let index_var = name_gen.next("i");
     let mut pre = vec![format!(
-        "lean_obj_res {} = lean_mk_empty_array_with_capacity(lean_box({}));",
+        "lean_obj_res {} = lean_ffi_mk_array_with_capacity({});",
         result_var, size
     )];
 

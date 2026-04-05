@@ -365,6 +365,58 @@
       "return_value": null
     },
     {
+      "name": "dereference_int_return",
+      "omit": false,
+      "no_io": false,
+      "parameters": [],
+      "return_value": {
+        "Dereference": {
+          "nullable": false,
+          "element_conversion": null,
+          "free": true,
+          "free_function": null
+        }
+      }
+    },
+    {
+      "name": "dereference_int_return_nullable",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": {
+        "Dereference": {
+          "nullable": true,
+          "element_conversion": null,
+          "free": true,
+          "free_function": null
+        }
+      }
+    },
+    {
+      "name": "dereference_string_return",
+      "omit": false,
+      "no_io": false,
+      "parameters": [],
+      "return_value": {
+        "Dereference": {
+          "nullable": false,
+          "element_conversion": {
+            "String": {
+              "nullable": false,
+              "free": false,
+              "free_function": null
+            }
+          },
+          "free": true,
+          "free_function": null
+        }
+      }
+    },
+    {
       "name": "dynamic_string_array_return",
       "omit": false,
       "no_io": false,

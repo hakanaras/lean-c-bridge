@@ -626,3 +626,27 @@ static inline void string_buffer_with_length_test(char* buffer, size_t buffer_si
     strncpy(buffer, "Hello, World! Hello, World!", buffer_size - 1);
     buffer[buffer_size - 1] = '\0';
 }
+
+// -- Dereference Returns --
+
+static inline int* dereference_int_return() {
+    int* value = malloc(sizeof(int));
+    *value = 123;
+    return value;
+}
+
+static inline int* dereference_int_return_nullable(int value) {
+    if (value < 0) {
+        return NULL;
+    }
+
+    int* result = malloc(sizeof(int));
+    *result = value + 1;
+    return result;
+}
+
+static inline char** dereference_string_return() {
+    char** value = malloc(sizeof(char*));
+    *value = "Dereference";
+    return value;
+}

@@ -127,11 +127,15 @@ def test_enums : IO Unit := do
 
 def test_arrays : IO Unit := do
   assert! (<- static_array_return).arr == #[1, 2, 3, 4]
-  dynamic_array_take #[1, 2, 3, 4]
+  dynamic_array_take (.some #[1, 2, 3, 4]) 4
+  dynamic_array_take (.some #[]) 0
+  dynamic_array_take (.none) (-1)
   dynamic_string_array_take #["Hello", "World"]
   static_array_take #[1, 2, 3, 4]
-  let a1 <- dynamic_string_array_return
-  assert! a1 == #["Hello", "World"]
+  assert! (<- dynamic_string_array_return) == #["Hello", "World"]
+  assert! (<- dynamic_string_array_return_nullable (-1)) == .none
+  assert! (<- dynamic_string_array_return_nullable 0) == .some #[]
+  assert! (<- dynamic_string_array_return_nullable 4) == .some #["Foo", "Foo", "Foo", "Foo"]
   let (a2, str) <- array_and_string_return
   assert! a2 == #["Hello", "World"]
   assert! str == ""
@@ -182,6 +186,10 @@ def test_strings : IO Unit := do
   assert! s2 == "Hello, World!"
   string_take "Hello, World!"
   string_take_with_length "Hello, World!"
+  string_take_null .none
+  assert! (<- alloc_string_return_nullable (-1)) == .none
+  assert! (<- alloc_string_return_nullable 0) == .some ""
+  assert! (<- alloc_string_return_nullable 13) == .some "Hello, World!"
 
 def test_out_params : IO Unit := do
   let (i1, i2, s) <- out_tuple_test 42

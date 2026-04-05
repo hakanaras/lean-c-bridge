@@ -35,7 +35,11 @@ pub struct ParameterChoices {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParameterSpecialConversion {
     /// Automatically pass a char* from a Lean String, and free it after the call
-    String,
+    String {
+        /// Whether to use `Option String` instead of `String` and pass `null` when `none`.
+        #[serde(default)]
+        nullable: bool,
+    },
     /// Pass an automatically allocated char* buffer that can be used by the original C function to write a string into.
     /// The buffer is subsequently converted back into a Lean String and added to the return value by making it a tuple.
     /// The buffer is automatically freed after the call.
@@ -45,6 +49,9 @@ pub enum ParameterSpecialConversion {
     },
     /// Pass a pointer to a newly allocated array containing the elements of a Lean Array, and free it after the call
     Array {
+        /// Whether to use `Option (Array ...)` instead of `Array ...` and pass `null` when `none`.
+        #[serde(default)]
+        nullable: bool,
         /// Optional conversion for the individual elements of the array
         element_conversion: Option<Box<ParameterSpecialConversion>>,
     },
@@ -73,6 +80,9 @@ pub enum ParameterSpecialConversion {
 pub enum ReturnValueSpecialConversion {
     /// Automatically convert a char* return value into a Lean String.
     String {
+        /// Whether to use `Option String` instead of `String` and interpret `null` as `none`.
+        #[serde(default)]
+        nullable: bool,
         /// Whether to free the char* after converting it.
         free: bool,
         /// Function that should be used to free the char*.
@@ -83,6 +93,9 @@ pub enum ReturnValueSpecialConversion {
     /// Automatically convert a pointer-to-pointer return value (which is interpreted as a null-terminated array)
     /// into a Lean Array.
     NullTerminatedArray {
+        /// Whether to use `Option (Array ...)` instead of `Array ...` and interpret `null` as `none`.
+        #[serde(default)]
+        nullable: bool,
         /// Optional conversion for the pointed value, using the same conversion choices as return values.
         element_conversion: Option<Box<ReturnValueSpecialConversion>>,
         /// Whether to free the top-level array after converting it.

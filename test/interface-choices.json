@@ -188,35 +188,15 @@
       "return_value": null
     },
     {
-      "name": "dynamic_array_take",
-      "omit": false,
-      "no_io": false,
-      "parameters": [
-        {
-          "conversion_strategy": {
-            "Array": {
-              "element_conversion": null
-            }
-          }
-        },
-        {
-          "conversion_strategy": {
-            "Length": {
-              "of_param_index": 0
-            }
-          }
-        }
-      ],
-      "return_value": null
-    },
-    {
       "name": "lit_string_return",
       "omit": false,
       "no_io": false,
       "parameters": [],
       "return_value": {
         "String": {
-          "free": false
+          "nullable": false,
+          "free": false,
+          "free_function": null
         }
       }
     },
@@ -227,7 +207,9 @@
       "parameters": [],
       "return_value": {
         "String": {
-          "free": true
+          "nullable": false,
+          "free": true,
+          "free_function": null
         }
       }
     },
@@ -237,7 +219,11 @@
       "no_io": false,
       "parameters": [
         {
-          "conversion_strategy": "String"
+          "conversion_strategy": {
+            "String": {
+              "nullable": false
+            }
+          }
         }
       ],
       "return_value": null
@@ -248,7 +234,11 @@
       "no_io": false,
       "parameters": [
         {
-          "conversion_strategy": "String"
+          "conversion_strategy": {
+            "String": {
+              "nullable": false
+            }
+          }
         },
         {
           "conversion_strategy": {
@@ -304,7 +294,9 @@
             "Out": {
               "element_conversion": {
                 "String": {
-                  "free": true
+                  "nullable": false,
+                  "free": true,
+                  "free_function": null
                 }
               }
             }
@@ -379,12 +371,16 @@
       "parameters": [],
       "return_value": {
         "NullTerminatedArray": {
+          "nullable": false,
           "element_conversion": {
             "String": {
-              "free": false
+              "nullable": false,
+              "free": false,
+              "free_function": null
             }
           },
-          "free_array_after_conversion": true
+          "free_array_after_conversion": true,
+          "free_function": null
         }
       }
     },
@@ -410,12 +406,16 @@
       ],
       "return_value": {
         "NullTerminatedArray": {
+          "nullable": false,
           "element_conversion": {
             "String": {
-              "free": false
+              "nullable": false,
+              "free": false,
+              "free_function": null
             }
           },
-          "free_array_after_conversion": true
+          "free_array_after_conversion": true,
+          "free_function": null
         }
       }
     },
@@ -427,7 +427,12 @@
         {
           "conversion_strategy": {
             "Array": {
-              "element_conversion": "String"
+              "nullable": false,
+              "element_conversion": {
+                "String": {
+                  "nullable": false
+                }
+              }
             }
           }
         },
@@ -440,6 +445,88 @@
         }
       ],
       "return_value": null
+    },
+    {
+      "name": "dynamic_array_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Array": {
+              "nullable": true,
+              "element_conversion": null
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        },
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "string_take_null",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "String": {
+              "nullable": true
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "alloc_string_return_nullable",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": {
+        "String": {
+          "nullable": true,
+          "free": true,
+          "free_function": null
+        }
+      }
+    },
+    {
+      "name": "dynamic_string_array_return_nullable",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": {
+        "NullTerminatedArray": {
+          "nullable": true,
+          "element_conversion": {
+            "String": {
+              "nullable": false,
+              "free": false,
+              "free_function": null
+            }
+          },
+          "free_array_after_conversion": true,
+          "free_function": null
+        }
+      }
     }
   ]
 }

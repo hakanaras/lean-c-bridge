@@ -380,12 +380,16 @@ static inline void static_array_take(int arr[4]) {
 
 // -- Dynamic Array --
 
-static inline void dynamic_array_take(int* array, size_t length) {
-    assert(length == 4);
-    assert(array[0] == 1);
-    assert(array[1] == 2);
-    assert(array[2] == 3);
-    assert(array[3] == 4);
+static inline void dynamic_array_take(int* array, size_t length, int length_taken) {
+    if (length_taken < 0) {
+        assert(length == 0);
+        assert(array == NULL);
+    } else {
+        assert(length == (size_t)length_taken);
+        for (size_t i = 0; i < length; i++) {
+            assert(array[i] == (int)(i + 1));
+        }
+    }
 }
 
 static inline void dynamic_string_array_take(char** array, size_t length) {
@@ -401,6 +405,19 @@ static inline char** dynamic_string_array_return() {
     arr[1] = "World";
     arr[2] = NULL;
     return arr;
+}
+
+static inline char** dynamic_string_array_return_nullable(int length) {
+    if (length < 0) {
+        return NULL;
+    } else {
+        char** arr = malloc(((size_t)length + 1) * sizeof(char*));
+        for (int i = 0; i < length; i++) {
+            arr[i] = "Foo";
+        }
+        arr[length] = NULL;
+        return arr;
+    }
 }
 
 static inline char** array_and_string_return(char* str_buffer, size_t buffer_size) {
@@ -419,6 +436,17 @@ static inline char* alloc_string_return() {
     return str;
 }
 
+static inline char* alloc_string_return_nullable(int length) {
+    if (length < 0) {
+        return NULL;
+    } else {
+        char* str = malloc((size_t)length + 1);
+        strncpy(str, "Hello, World!", (size_t) length);
+        str[length] = '\0';
+        return str;
+    }
+}
+
 static inline void string_take(const char* str) {
     assert(strcmp(str, "Hello, World!") == 0);
 }
@@ -426,6 +454,10 @@ static inline void string_take(const char* str) {
 static inline void string_take_with_length(const char* str, size_t length) {
     assert(length == 13);
     assert(strncmp(str, "Hello, World!", length) == 0);
+}
+
+static inline void string_take_null(const char* str) {
+    assert(str == NULL);
 }
 
 // -- Structs --

@@ -51,7 +51,9 @@ static inline lean_obj_res lean_ffi_mk_array_with_capacity(size_t capacity) {
 #define LEAN_FFI_MALLOC_ARRAY_OR_NULL(type, count) ((type *)lean_ffi_malloc_array_or_null(sizeof(type), (count)))
 #define LEAN_FFI_CALLOC_ARRAY(type, count) ((type *)lean_ffi_calloc_array((count), sizeof(type)))
 
-lean_obj_res lean_tuple_prepend(lean_obj_res acc, lean_obj_res value) {
+// -- Tuple Helpers --
+
+static inline lean_obj_res lean_ffi_tuple_prepend(lean_obj_res acc, lean_obj_res value) {
     if (acc == lean_box(0)) {
         return value;
     } else {
@@ -60,4 +62,31 @@ lean_obj_res lean_tuple_prepend(lean_obj_res acc, lean_obj_res value) {
         lean_ctor_set(new_tuple, 1, acc);
         return new_tuple;
     }
+}
+
+// -- Option Helpers --
+
+static inline lean_obj_res lean_ffi_option_none() {
+    return lean_alloc_ctor(0, 0, 0);
+}
+
+static inline bool lean_ffi_option_is_none(b_lean_obj_arg option) {
+    return lean_obj_tag(option) == 0;
+}
+
+static inline lean_obj_res lean_ffi_option_some(lean_obj_res value) {
+    lean_obj_res some = lean_alloc_ctor(1, 1, 0);
+    lean_ctor_set(some, 0, value);
+    return some;
+}
+
+static inline bool lean_ffi_option_is_some(b_lean_obj_arg option) {
+    return lean_obj_tag(option) == 1;
+}
+
+static inline b_lean_obj_res lean_ffi_option_get(b_lean_obj_arg option) {
+    if (lean_ffi_option_is_none(option)) {
+        lean_internal_panic("attempted to get value from none option");
+    }
+    return lean_ctor_get(option, 0);
 }

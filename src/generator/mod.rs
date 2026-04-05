@@ -408,7 +408,7 @@ pub fn generate_function(
         for return_value in return_components.into_iter().rev() {
             body_lines.extend(return_value.pre);
             body_lines.push(format!(
-                "returnValue = lean_tuple_prepend(returnValue, {});",
+                "returnValue = lean_ffi_tuple_prepend(returnValue, {});",
                 return_value.expr
             ));
             body_lines.extend(return_value.post);
@@ -561,9 +561,14 @@ fn lean_type_for_parameter(
     strategy: Option<&ParameterSpecialConversion>,
 ) -> Result<String, String> {
     match strategy {
-        Some(ParameterSpecialConversion::String) => {
+        Some(ParameterSpecialConversion::String { nullable }) => {
             if registry.is_char_pointer_like(ty) {
-                Ok("String".to_string())
+                let base_ty = "String".to_string();
+                Ok(if *nullable {
+                    lean_option_type(&base_ty)
+                } else {
+                    base_ty
+                })
             } else {
                 Err("string conversion requires a char* parameter".to_string())
             }
@@ -571,7 +576,10 @@ fn lean_type_for_parameter(
         Some(ParameterSpecialConversion::StringBuffer { .. }) => {
             Err("string buffer parameters do not have Lean input types".to_string())
         }
-        Some(ParameterSpecialConversion::Array { element_conversion }) => {
+        Some(ParameterSpecialConversion::Array {
+            nullable,
+            element_conversion,
+        }) => {
             let element_ty = registry
                 .pointer_element_type(ty)
                 .ok_or_else(|| "array conversion requires a pointer parameter".to_string())?;
@@ -585,7 +593,7 @@ fn lean_type_for_parameter(
                 );
             }
 
-            Ok(format!(
+            let base_ty = format!(
                 "Array {}",
                 parenthesize_lean_type(&lean_type_for_parameter(
                     lean_ctx,
@@ -594,7 +602,13 @@ fn lean_type_for_parameter(
                     &element_ty,
                     nested,
                 )?)
-            ))
+            );
+
+            Ok(if *nullable {
+                lean_option_type(&base_ty)
+            } else {
+                base_ty
+            })
         }
         Some(ParameterSpecialConversion::Length { .. })
         | Some(ParameterSpecialConversion::StaticExpr { .. }) => {
@@ -611,14 +625,20 @@ fn lean_type_for_return(
     ty: &CType,
     strategy: Option<&ReturnValueSpecialConversion>,
 ) -> Result<String, String> {
-    if matches!(strategy, Some(ReturnValueSpecialConversion::String { .. })) {
+    if let Some(ReturnValueSpecialConversion::String { nullable, .. }) = strategy {
         if registry.is_char_pointer_like(ty) {
-            return Ok("String".to_string());
+            let base_ty = "String".to_string();
+            return Ok(if *nullable {
+                lean_option_type(&base_ty)
+            } else {
+                base_ty
+            });
         }
         return Err("string return conversion requires a char* return type".to_string());
     }
 
     if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
+        nullable,
         element_conversion, ..
     }) = strategy
     {
@@ -634,7 +654,7 @@ fn lean_type_for_return(
             );
         }
 
-        return Ok(format!(
+        let base_ty = format!(
             "Array {}",
             parenthesize_lean_type(&lean_type_for_return(
                 lean_ctx,
@@ -643,7 +663,13 @@ fn lean_type_for_return(
                 &element_ty,
                 element_conversion.as_deref(),
             )?)
-        ));
+        );
+
+        return Ok(if *nullable {
+            lean_option_type(&base_ty)
+        } else {
+            base_ty
+        });
     }
 
     lean_type_for_default(lean_ctx, c_ctx, registry, ty)
@@ -937,19 +963,23 @@ fn prepare_parameter_value(
     top_level_adapter_param: bool,
 ) -> Result<PreparedValue, String> {
     match strategy {
-        Some(ParameterSpecialConversion::String) => {
-            prepare_string_parameter(lean_expr, name_gen, registry, ty)
+        Some(ParameterSpecialConversion::String { nullable }) => {
+            prepare_string_parameter(lean_expr, name_gen, registry, ty, *nullable)
         }
         Some(ParameterSpecialConversion::StringBuffer { .. }) => {
             Err("string buffer parameters are handled separately".to_string())
         }
-        Some(ParameterSpecialConversion::Array { element_conversion }) => prepare_array_parameter(
+        Some(ParameterSpecialConversion::Array {
+            nullable,
+            element_conversion,
+        }) => prepare_array_parameter(
             lean_ctx,
             c_ctx,
             registry,
             name_gen,
             lean_expr,
             ty,
+            *nullable,
             normalize_nested_strategy(element_conversion.as_deref()),
         ),
         Some(ParameterSpecialConversion::Length { .. })
@@ -973,6 +1003,7 @@ fn prepare_string_parameter(
     name_gen: &mut NameGen,
     registry: &TypeRegistry,
     ty: &CType,
+    nullable: bool,
 ) -> Result<PreparedValue, String> {
     if !registry.is_char_pointer_like(ty) {
         return Err("string conversion requires a char* parameter".to_string());
@@ -980,17 +1011,29 @@ fn prepare_string_parameter(
 
     let bytes_var = name_gen.next("string_bytes");
     let cstr_var = name_gen.next("string_cstr");
-    Ok(PreparedValue {
-        pre: vec![
+    let pre = if nullable {
+        vec![
+            format!("size_t {} = 0;", bytes_var),
+            format!("char * {} = NULL;", cstr_var),
+            format!("if (lean_ffi_option_is_some({})) {{", lean_expr),
             format!(
-                "size_t {} = 0;",
-                bytes_var
+                "    {} = lean_ffi_copy_lean_string(lean_ffi_option_get({}), &{});",
+                cstr_var, lean_expr, bytes_var
             ),
+            "}".to_string(),
+        ]
+    } else {
+        vec![
+            format!("size_t {} = 0;", bytes_var),
             format!(
                 "char * {} = lean_ffi_copy_lean_string({}, &{});",
                 cstr_var, lean_expr, bytes_var
             ),
-        ],
+        ]
+    };
+
+    Ok(PreparedValue {
+        pre,
         expr: cstr_var.clone(),
         post: vec![format!("free({});", cstr_var)],
         length_expr: Some(bytes_var),
@@ -1016,6 +1059,7 @@ fn prepare_string_buffer_parameter(
     let size_var = name_gen.next(&format!("{}_string_buffer_size", parameter_name));
     let buffer_var = name_gen.next(&format!("{}_string_buffer", parameter_name));
     let return_strategy = ReturnValueSpecialConversion::String {
+        nullable: false,
         free: true,
         free_function: None,
     };
@@ -1051,6 +1095,7 @@ fn prepare_array_parameter(
     name_gen: &mut NameGen,
     lean_expr: &str,
     ty: &CType,
+    nullable: bool,
     element_strategy: Option<&ParameterSpecialConversion>,
 ) -> Result<PreparedValue, String> {
     let element_ty = registry
@@ -1077,44 +1122,89 @@ fn prepare_array_parameter(
     let len_var = name_gen.next("array_len");
     let data_var = name_gen.next("array_data");
     let index_var = name_gen.next("i");
+    let array_expr = if nullable {
+        name_gen.next("array_value")
+    } else {
+        String::new()
+    };
     let element_c_ty = render_c_type(&element_ty);
     let is_pointer_element = registry.is_pointer_like(&element_ty);
 
-    let mut pre = vec![format!(
-        "size_t {} = lean_array_size({});",
-        len_var, lean_expr
-    )];
-    if is_pointer_element {
+    let mut pre = vec![format!("size_t {} = 0;", len_var)];
+    pre.push(format!("{} * {} = NULL;", element_c_ty, data_var));
+    if nullable {
+        pre.push(format!("if (lean_ffi_option_is_some({})) {{", lean_expr));
         pre.push(format!(
-            "{} * {} = LEAN_FFI_MALLOC_ARRAY({}, {} + 1);",
-            element_c_ty, data_var, element_c_ty, len_var
+            "    lean_object * {} = lean_ffi_option_get({});",
+            array_expr, lean_expr
+        ));
+        pre.push(format!(
+            "    {} = lean_array_size({});",
+            len_var, array_expr
+        ));
+        if is_pointer_element {
+            pre.push(format!(
+                "    {} = LEAN_FFI_MALLOC_ARRAY({}, {} + 1);",
+                data_var, element_c_ty, len_var
+            ));
+        } else {
+            pre.push(format!(
+                "    {} = LEAN_FFI_MALLOC_ARRAY_OR_NULL({}, {});",
+                data_var, element_c_ty, len_var
+            ));
+        }
+        pre.push(format!(
+            "    for (size_t {} = 0; {} < {}; ++{}) {{",
+            index_var, index_var, len_var, index_var
         ));
     } else {
         pre.push(format!(
-            "{} * {} = LEAN_FFI_MALLOC_ARRAY_OR_NULL({}, {});",
-            element_c_ty, data_var, element_c_ty, len_var
+            "{} = lean_array_size({});",
+            len_var, lean_expr
+        ));
+        if is_pointer_element {
+            pre.push(format!(
+                "{} = LEAN_FFI_MALLOC_ARRAY({}, {} + 1);",
+                data_var, element_c_ty, len_var
+            ));
+        } else {
+            pre.push(format!(
+                "{} = LEAN_FFI_MALLOC_ARRAY_OR_NULL({}, {});",
+                data_var, element_c_ty, len_var
+            ));
+        }
+        pre.push(format!(
+            "for (size_t {} = 0; {} < {}; ++{}) {{",
+            index_var, index_var, len_var, index_var
         ));
     }
-    pre.push(format!(
-        "for (size_t {} = 0; {} < {}; ++{}) {{",
-        index_var, index_var, len_var, index_var
-    ));
 
     let mut post = Vec::new();
     match element_strategy {
-        Some(ParameterSpecialConversion::String) => {
+        Some(ParameterSpecialConversion::String { nullable }) => {
             if !registry.is_char_pointer_like(&element_ty) {
                 return Err("string element conversion requires char* array elements".to_string());
             }
             let string_var = name_gen.next("elem_cstr");
+            let source_expr = if *nullable { &array_expr } else { lean_expr };
             pre.push(format!(
                 "    lean_object * ffi_elem = lean_array_get_core({}, {});",
-                lean_expr, index_var
+                source_expr, index_var
             ));
-            pre.push(format!(
-                "    char * {} = lean_ffi_copy_lean_string(ffi_elem, NULL);",
-                string_var
-            ));
+            if *nullable {
+                pre.push(format!("    char * {} = NULL;", string_var));
+                pre.push("    if (lean_ffi_option_is_some(ffi_elem)) {".to_string());
+                pre.push(format!(
+                    "        {} = lean_ffi_copy_lean_string(lean_ffi_option_get(ffi_elem), NULL);",
+                    string_var
+                ));
+                pre.push("    }".to_string());
+            } else {
+                pre.push(format!(
+                    "    char * {} = lean_ffi_copy_lean_string(ffi_elem, NULL);",
+                    string_var
+                ));
+            }
             pre.push(format!("    {}[{}] = {};", data_var, index_var, string_var));
 
             post.push(format!(
@@ -1125,9 +1215,10 @@ fn prepare_array_parameter(
             post.push("}".to_string());
         }
         _ => {
+            let source_expr = if nullable { &array_expr } else { lean_expr };
             pre.push(format!(
                 "    lean_object * ffi_elem = lean_array_get_core({}, {});",
-                lean_expr, index_var
+                source_expr, index_var
             ));
             let prepared = prepare_default_parameter_value(
                 lean_ctx,
@@ -1152,7 +1243,14 @@ fn prepare_array_parameter(
     }
     pre.push("}".to_string());
     if is_pointer_element {
-        pre.push(format!("{}[{}] = NULL;", data_var, len_var));
+        if nullable {
+            pre.push(format!("    {}[{}] = NULL;", data_var, len_var));
+            pre.push("}".to_string());
+        } else {
+            pre.push(format!("{}[{}] = NULL;", data_var, len_var));
+        }
+    } else if nullable {
+        pre.push("}".to_string());
     }
     post.push(format!("free({});", data_var));
 
@@ -1441,6 +1539,7 @@ fn prepare_return_value(
     }
 
     if let Some(ReturnValueSpecialConversion::String {
+        nullable,
         free,
         free_function,
     }) = strategy
@@ -1449,21 +1548,31 @@ fn prepare_return_value(
             return Err("string return conversion requires a char* return type".to_string());
         }
         let result_var = name_gen.next("lean_result");
+        let source_expr = c_expr.unwrap();
+        let pre = if *nullable {
+            vec![
+                format!("lean_obj_res {} = lean_ffi_option_none();", result_var),
+                format!("if ({} != NULL) {{", source_expr),
+                format!("    lean_obj_res ffi_string = lean_mk_string({});", source_expr),
+                format!("    {} = lean_ffi_option_some(ffi_string);", result_var),
+                "}".to_string(),
+            ]
+        } else {
+            vec![format!(
+                "lean_obj_res {} = lean_mk_string({} == NULL ? \"\" : {});",
+                result_var, source_expr, source_expr
+            )]
+        };
         let mut post = Vec::new();
         if *free {
             post.push(format!(
                 "{}((void *){});",
                 deallocator_name(free_function.as_deref()),
-                c_expr.unwrap()
+                source_expr
             ));
         }
         return Ok(PreparedValue {
-            pre: vec![format!(
-                "lean_obj_res {} = lean_mk_string({} == NULL ? \"\" : {});",
-                result_var,
-                c_expr.unwrap(),
-                c_expr.unwrap()
-            )],
+            pre,
             expr: result_var,
             post,
             length_expr: None,
@@ -1471,6 +1580,7 @@ fn prepare_return_value(
     }
 
     if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
+        nullable,
         element_conversion,
         free_array_after_conversion,
         free_function,
@@ -1493,30 +1603,54 @@ fn prepare_return_value(
         let index_var = name_gen.next("i");
         let element_var = name_gen.next("array_elem");
         let element_c_ty = render_c_type(&element_ty);
+        let source_expr = c_expr.unwrap();
+        let array_var = if *nullable {
+            name_gen.next("lean_array_value")
+        } else {
+            result_var.clone()
+        };
         let mut pre = vec![format!("size_t {} = 0;", len_var)];
-        pre.push(format!(
-            "while ({} != NULL && {}[{}] != NULL) {{",
-            c_expr.unwrap(),
-            c_expr.unwrap(),
-            len_var
-        ));
-        pre.push(format!("    ++{};", len_var));
-        pre.push("}".to_string());
-        pre.push(format!(
-            "lean_obj_res {} = lean_ffi_mk_array_with_capacity({});",
-            result_var, len_var
-        ));
-        pre.push(format!(
-            "for (size_t {} = 0; {} < {}; ++{}) {{",
-            index_var, index_var, len_var, index_var
-        ));
-        pre.push(format!(
-            "    {} {} = {}[{}];",
-            element_c_ty,
-            element_var,
-            c_expr.unwrap(),
-            index_var
-        ));
+        if *nullable {
+            pre.push(format!("lean_obj_res {} = lean_ffi_option_none();", result_var));
+            pre.push(format!("if ({} != NULL) {{", source_expr));
+            pre.push(format!(
+                "    while ({}[{}] != NULL) {{",
+                source_expr, len_var
+            ));
+            pre.push(format!("        ++{};", len_var));
+            pre.push("    }".to_string());
+            pre.push(format!(
+                "    lean_obj_res {} = lean_ffi_mk_array_with_capacity({});",
+                array_var, len_var
+            ));
+            pre.push(format!(
+                "    for (size_t {} = 0; {} < {}; ++{}) {{",
+                index_var, index_var, len_var, index_var
+            ));
+            pre.push(format!(
+                "        {} {} = {}[{}];",
+                element_c_ty, element_var, source_expr, index_var
+            ));
+        } else {
+            pre.push(format!(
+                "while ({} != NULL && {}[{}] != NULL) {{",
+                source_expr, source_expr, len_var
+            ));
+            pre.push(format!("    ++{};", len_var));
+            pre.push("}".to_string());
+            pre.push(format!(
+                "lean_obj_res {} = lean_ffi_mk_array_with_capacity({});",
+                result_var, len_var
+            ));
+            pre.push(format!(
+                "for (size_t {} = 0; {} < {}; ++{}) {{",
+                index_var, index_var, len_var, index_var
+            ));
+            pre.push(format!(
+                "    {} {} = {}[{}];",
+                element_c_ty, element_var, source_expr, index_var
+            ));
+        }
 
         let prepared = prepare_return_value(
             lean_ctx,
@@ -1529,25 +1663,37 @@ fn prepare_return_value(
             true,
         )?;
 
-        pre.extend(prepared.pre.into_iter().map(|line| format!("    {}", line)));
+        let indent = if *nullable { "        " } else { "    " };
+        pre.extend(
+            prepared
+                .pre
+                .into_iter()
+                .map(|line| format!("{}{}", indent, line)),
+        );
         pre.push(format!(
-            "    {} = lean_array_push({}, {});",
-            result_var, result_var, prepared.expr
+            "{}{} = lean_array_push({}, {});",
+            indent, array_var, array_var, prepared.expr
         ));
         pre.extend(
             prepared
                 .post
                 .into_iter()
-                .map(|line| format!("    {}", line)),
+                .map(|line| format!("{}{}", indent, line)),
         );
-        pre.push("}".to_string());
+        if *nullable {
+            pre.push("    }".to_string());
+            pre.push(format!("    {} = lean_ffi_option_some({});", result_var, array_var));
+            pre.push("}".to_string());
+        } else {
+            pre.push("}".to_string());
+        }
 
         let mut post = Vec::new();
         if *free_array_after_conversion {
             post.push(format!(
                 "{}((void *){});",
                 deallocator_name(free_function.as_deref()),
-                c_expr.unwrap()
+                source_expr
             ));
         }
 
@@ -1810,6 +1956,10 @@ fn parenthesize_lean_type(ty: &str) -> String {
     } else {
         ty.to_string()
     }
+}
+
+fn lean_option_type(ty: &str) -> String {
+    format!("Option {}", parenthesize_lean_type(ty))
 }
 
 fn ensure_out_stack_type_supported(ty: &CType) -> Result<(), String> {

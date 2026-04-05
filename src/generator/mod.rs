@@ -68,6 +68,13 @@ struct PreparedValue {
     length_expr: Option<String>,
 }
 
+struct PreparedStorage {
+    declarations: Vec<String>,
+    init: Vec<String>,
+    cleanup: Vec<String>,
+    length_expr: Option<String>,
+}
+
 pub fn generate_function(
     lean_ctx: &mut LeanContext,
     c_ctx: &mut CContext,
@@ -561,6 +568,44 @@ fn lean_type_for_parameter(
     strategy: Option<&ParameterSpecialConversion>,
 ) -> Result<String, String> {
     match strategy {
+        Some(ParameterSpecialConversion::Reference {
+            nullable,
+            element_conversion,
+        }) => {
+            let element_ty = registry
+                .pointer_element_type(ty)
+                .ok_or_else(|| "reference conversion requires a pointer parameter".to_string())?;
+            let nested = normalize_nested_strategy(element_conversion.as_deref());
+            match nested {
+                Some(ParameterSpecialConversion::StringBuffer { .. }) => {
+                    return Err(
+                        "reference pointed-value conversions do not support string buffers"
+                            .to_string(),
+                    );
+                }
+                Some(ParameterSpecialConversion::Out { .. }) => {
+                    return Err(
+                        "reference pointed-value conversions do not support out conversions"
+                            .to_string(),
+                    );
+                }
+                Some(ParameterSpecialConversion::Length { .. })
+                | Some(ParameterSpecialConversion::StaticExpr { .. }) => {
+                    return Err(
+                        "reference pointed-value conversions do not support omitted values"
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
+
+            let base_ty = lean_type_for_parameter(lean_ctx, c_ctx, registry, &element_ty, nested)?;
+            Ok(if *nullable {
+                lean_option_type(&base_ty)
+            } else {
+                base_ty
+            })
+        }
         Some(ParameterSpecialConversion::String { nullable }) => {
             if registry.is_char_pointer_like(ty) {
                 let base_ty = "String".to_string();
@@ -584,11 +629,15 @@ fn lean_type_for_parameter(
                 .pointer_element_type(ty)
                 .ok_or_else(|| "array conversion requires a pointer parameter".to_string())?;
             let nested = normalize_nested_strategy(element_conversion.as_deref());
-            if matches!(nested, Some(ParameterSpecialConversion::Length { .. }))
+            if matches!(nested, Some(ParameterSpecialConversion::Reference { .. }))
+                || matches!(nested, Some(ParameterSpecialConversion::Array { .. }))
+                || matches!(nested, Some(ParameterSpecialConversion::StringBuffer { .. }))
+                || matches!(nested, Some(ParameterSpecialConversion::Out { .. }))
+                || matches!(nested, Some(ParameterSpecialConversion::Length { .. }))
                 || matches!(nested, Some(ParameterSpecialConversion::StaticExpr { .. }))
             {
                 return Err(
-                    "array element conversions do not support length or static expressions"
+                    "array element conversions only support default conversion or string conversion"
                         .to_string(),
                 );
             }
@@ -988,6 +1037,20 @@ fn prepare_parameter_value(
     top_level_adapter_param: bool,
 ) -> Result<PreparedValue, String> {
     match strategy {
+        Some(ParameterSpecialConversion::Reference {
+            nullable,
+            element_conversion,
+        }) => prepare_reference_parameter(
+            lean_ctx,
+            c_ctx,
+            registry,
+            name_gen,
+            lean_expr,
+            ty,
+            *nullable,
+            normalize_nested_strategy(element_conversion.as_deref()),
+            top_level_adapter_param,
+        ),
         Some(ParameterSpecialConversion::String { nullable }) => {
             prepare_string_parameter(lean_expr, name_gen, registry, ty, *nullable)
         }
@@ -1128,9 +1191,15 @@ fn prepare_array_parameter(
         .ok_or_else(|| "array conversion requires a pointer parameter".to_string())?;
     if matches!(
         element_strategy,
-        Some(ParameterSpecialConversion::Array { .. })
+        Some(ParameterSpecialConversion::Reference { .. })
+            | Some(ParameterSpecialConversion::Array { .. })
+            | Some(ParameterSpecialConversion::StringBuffer { .. })
+            | Some(ParameterSpecialConversion::Out { .. })
     ) {
-        return Err("nested array element conversions are not supported".to_string());
+        return Err(
+            "array element conversions only support default conversion or string conversion"
+                .to_string(),
+        );
     }
     if matches!(
         element_strategy,
@@ -1285,6 +1354,316 @@ fn prepare_array_parameter(
         post,
         length_expr: Some(len_var),
     })
+}
+
+fn prepare_reference_parameter(
+    lean_ctx: &mut LeanContext,
+    c_ctx: &mut CContext,
+    registry: &TypeRegistry,
+    name_gen: &mut NameGen,
+    lean_expr: &str,
+    ty: &CType,
+    nullable: bool,
+    element_strategy: Option<&ParameterSpecialConversion>,
+    top_level_adapter_param: bool,
+) -> Result<PreparedValue, String> {
+    let value_ty = registry
+        .pointer_element_type(ty)
+        .ok_or_else(|| "reference conversion requires a pointer parameter".to_string())?;
+    let value_var = name_gen.next("reference_value");
+
+    if nullable {
+        let pointer_var = name_gen.next("reference_ptr");
+        let inner_expr = format!("lean_ffi_option_get({})", lean_expr);
+        let storage = prepare_reference_storage(
+            lean_ctx,
+            c_ctx,
+            registry,
+            name_gen,
+            &inner_expr,
+            &value_ty,
+            element_strategy,
+            false,
+            &value_var,
+        )?;
+
+        let mut pre = storage.declarations;
+        pre.push(format!(
+            "{} {} = NULL;",
+            render_c_type(ty),
+            pointer_var
+        ));
+        pre.push(format!("if (lean_ffi_option_is_some({})) {{", lean_expr));
+        pre.extend(indent_lines(&storage.init, "    "));
+        pre.push(format!("    {} = &{};", pointer_var, value_var));
+        pre.push("}".to_string());
+
+        let post = if storage.cleanup.is_empty() {
+            Vec::new()
+        } else {
+            let mut lines = vec![format!("if ({} != NULL) {{", pointer_var)];
+            lines.extend(indent_lines(&storage.cleanup, "    "));
+            lines.push("}".to_string());
+            lines
+        };
+
+        Ok(PreparedValue {
+            pre,
+            expr: pointer_var,
+            post,
+            length_expr: storage.length_expr,
+        })
+    } else {
+        let storage = prepare_reference_storage(
+            lean_ctx,
+            c_ctx,
+            registry,
+            name_gen,
+            lean_expr,
+            &value_ty,
+            element_strategy,
+            top_level_adapter_param,
+            &value_var,
+        )?;
+
+        let mut pre = storage.declarations;
+        pre.extend(storage.init);
+
+        Ok(PreparedValue {
+            pre,
+            expr: format!("&{}", value_var),
+            post: storage.cleanup,
+            length_expr: storage.length_expr,
+        })
+    }
+}
+
+fn prepare_reference_storage(
+    lean_ctx: &mut LeanContext,
+    c_ctx: &mut CContext,
+    registry: &TypeRegistry,
+    name_gen: &mut NameGen,
+    lean_expr: &str,
+    ty: &CType,
+    strategy: Option<&ParameterSpecialConversion>,
+    top_level_adapter_param: bool,
+    storage_var: &str,
+) -> Result<PreparedStorage, String> {
+    match strategy {
+        Some(ParameterSpecialConversion::Reference {
+            nullable,
+            element_conversion,
+        }) => {
+            let pointee_ty = registry.pointer_element_type(ty).ok_or_else(|| {
+                "reference pointed-value conversion requires a pointer value".to_string()
+            })?;
+            let inner_value_var = name_gen.next("reference_nested_value");
+            let inner_strategy = normalize_nested_strategy(element_conversion.as_deref());
+            let inner_expr = if *nullable {
+                Some(format!("lean_ffi_option_get({})", lean_expr))
+            } else {
+                None
+            };
+            let nested_storage = prepare_reference_storage(
+                lean_ctx,
+                c_ctx,
+                registry,
+                name_gen,
+                inner_expr.as_deref().unwrap_or(lean_expr),
+                &pointee_ty,
+                inner_strategy,
+                if *nullable {
+                    false
+                } else {
+                    top_level_adapter_param
+                },
+                &inner_value_var,
+            )?;
+
+            let mut declarations = vec![format!(
+                "{};",
+                render_zero_initialized_declaration(ty, storage_var)
+            )];
+            declarations.extend(nested_storage.declarations);
+
+            let init = if *nullable {
+                let mut lines = vec![format!("if (lean_ffi_option_is_some({})) {{", lean_expr)];
+                lines.extend(indent_lines(&nested_storage.init, "    "));
+                lines.push(format!("    {} = &{};", storage_var, inner_value_var));
+                lines.push("}".to_string());
+                lines
+            } else {
+                let mut lines = nested_storage.init;
+                lines.push(format!("{} = &{};", storage_var, inner_value_var));
+                lines
+            };
+
+            let cleanup = if *nullable && !nested_storage.cleanup.is_empty() {
+                let mut lines = vec![format!("if ({} != NULL) {{", storage_var)];
+                lines.extend(indent_lines(&nested_storage.cleanup, "    "));
+                lines.push("}".to_string());
+                lines
+            } else {
+                nested_storage.cleanup
+            };
+
+            Ok(PreparedStorage {
+                declarations,
+                init,
+                cleanup,
+                length_expr: nested_storage.length_expr,
+            })
+        }
+        Some(ParameterSpecialConversion::String { nullable }) => {
+            if !registry.is_char_pointer_like(ty) {
+                return Err(
+                    "string conversion requires a char* pointed value".to_string(),
+                );
+            }
+
+            let bytes_var = name_gen.next("reference_string_len");
+            let mut declarations = vec![format!("size_t {} = 0;", bytes_var)];
+            declarations.push(format!(
+                "{};",
+                render_zero_initialized_declaration(ty, storage_var)
+            ));
+
+            let init = if *nullable {
+                vec![
+                    format!("if (lean_ffi_option_is_some({})) {{", lean_expr),
+                    format!(
+                        "    {} = lean_ffi_copy_lean_string(lean_ffi_option_get({}), &{});",
+                        storage_var, lean_expr, bytes_var
+                    ),
+                    "}".to_string(),
+                ]
+            } else {
+                vec![format!(
+                    "{} = lean_ffi_copy_lean_string({}, &{});",
+                    storage_var, lean_expr, bytes_var
+                )]
+            };
+
+            Ok(PreparedStorage {
+                declarations,
+                init,
+                cleanup: vec![format!("free({});", storage_var)],
+                length_expr: Some(bytes_var),
+            })
+        }
+        Some(ParameterSpecialConversion::Array {
+            nullable,
+            element_conversion,
+        }) => {
+            let prepared = prepare_array_parameter(
+                lean_ctx,
+                c_ctx,
+                registry,
+                name_gen,
+                lean_expr,
+                ty,
+                *nullable,
+                normalize_nested_strategy(element_conversion.as_deref()),
+            )?;
+
+            Ok(PreparedStorage {
+                declarations: vec![format!(
+                    "{};",
+                    render_zero_initialized_declaration(ty, storage_var)
+                )],
+                init: prepared
+                    .pre
+                    .into_iter()
+                    .chain(std::iter::once(format!("{} = {};", storage_var, prepared.expr)))
+                    .collect(),
+                cleanup: prepared.post,
+                length_expr: prepared.length_expr,
+            })
+        }
+        Some(ParameterSpecialConversion::StringBuffer { .. }) => Err(
+            "reference pointed-value conversions do not support string buffers".to_string(),
+        ),
+        Some(ParameterSpecialConversion::Out { .. }) => Err(
+            "reference pointed-value conversions do not support out conversions".to_string(),
+        ),
+        Some(ParameterSpecialConversion::Length { .. })
+        | Some(ParameterSpecialConversion::StaticExpr { .. }) => Err(
+            "reference pointed-value conversions do not support omitted values".to_string(),
+        ),
+        None => prepare_reference_storage_default(
+            lean_ctx,
+            c_ctx,
+            registry,
+            name_gen,
+            lean_expr,
+            ty,
+            top_level_adapter_param,
+            storage_var,
+        ),
+    }
+}
+
+fn prepare_reference_storage_default(
+    lean_ctx: &mut LeanContext,
+    c_ctx: &mut CContext,
+    registry: &TypeRegistry,
+    name_gen: &mut NameGen,
+    lean_expr: &str,
+    ty: &CType,
+    top_level_adapter_param: bool,
+    storage_var: &str,
+) -> Result<PreparedStorage, String> {
+    match registry.resolve_alias_type(ty) {
+        CType::Array {
+            ref element,
+            size: Some(size),
+        } => {
+            let prepared = prepare_static_array_from_lean(
+                lean_ctx,
+                c_ctx,
+                registry,
+                name_gen,
+                lean_expr,
+                element,
+                size,
+                Some(storage_var.to_string()),
+            )?;
+
+            Ok(PreparedStorage {
+                declarations: vec![format!(
+                    "{};",
+                    render_zero_initialized_declaration(ty, storage_var)
+                )],
+                init: prepared.pre,
+                cleanup: Vec::new(),
+                length_expr: None,
+            })
+        }
+        _ => {
+            let prepared = prepare_default_parameter_value(
+                lean_ctx,
+                c_ctx,
+                registry,
+                name_gen,
+                lean_expr,
+                ty,
+                top_level_adapter_param,
+            )?;
+            let mut init = prepared.pre;
+            init.push(format!("{} = {};", storage_var, prepared.expr));
+            init.extend(prepared.post);
+
+            Ok(PreparedStorage {
+                declarations: vec![format!(
+                    "{};",
+                    render_zero_initialized_declaration(ty, storage_var)
+                )],
+                init,
+                cleanup: Vec::new(),
+                length_expr: None,
+            })
+        }
+    }
 }
 
 fn prepare_default_parameter_value(
@@ -1576,10 +1955,12 @@ fn prepare_return_value(
         let source_expr = c_expr.unwrap();
         let pre = if *nullable {
             vec![
-                format!("lean_obj_res {} = lean_ffi_option_none();", result_var),
+                format!("lean_obj_res {};", result_var),
                 format!("if ({} != NULL) {{", source_expr),
                 format!("    lean_obj_res ffi_string = lean_mk_string({});", source_expr),
                 format!("    {} = lean_ffi_option_some(ffi_string);", result_var),
+                "} else {".to_string(),
+                format!("    {} = lean_ffi_option_none();", result_var),
                 "}".to_string(),
             ]
         } else {
@@ -1634,7 +2015,7 @@ fn prepare_return_value(
         let mut pre = Vec::new();
 
         if *nullable {
-            pre.push(format!("lean_obj_res {} = lean_ffi_option_none();", result_var));
+            pre.push(format!("lean_obj_res {};", result_var));
             pre.push(format!("if ({} != NULL) {{", source_expr));
             pre.push(format!("    {} {} = *{};", element_c_ty, element_var, source_expr));
             pre.extend(nested.pre.into_iter().map(|line| format!("    {}", line)));
@@ -1651,6 +2032,8 @@ fn prepare_return_value(
                     source_expr
                 ));
             }
+            pre.push("} else {".to_string());
+            pre.push(format!("    {} = lean_ffi_option_none();", result_var));
             pre.push("}".to_string());
         } else {
             pre.push(format!("{} {} = *{};", element_c_ty, element_var, source_expr));
@@ -1714,7 +2097,7 @@ fn prepare_return_value(
         };
         let mut pre = vec![format!("size_t {} = 0;", len_var)];
         if *nullable {
-            pre.push(format!("lean_obj_res {} = lean_ffi_option_none();", result_var));
+            pre.push(format!("lean_obj_res {};", result_var));
             pre.push(format!("if ({} != NULL) {{", source_expr));
             pre.push(format!(
                 "    while ({}[{}] != NULL) {{",
@@ -1786,6 +2169,8 @@ fn prepare_return_value(
         if *nullable {
             pre.push("    }".to_string());
             pre.push(format!("    {} = lean_ffi_option_some({});", result_var, array_var));
+            pre.push("} else {".to_string());
+            pre.push(format!("    {} = lean_ffi_option_none();", result_var));
             pre.push("}".to_string());
         } else {
             pre.push("}".to_string());
@@ -2033,10 +2418,14 @@ fn pointer_cast_type(ty: &CType, registry: &TypeRegistry) -> Result<String, Stri
 fn normalize_nested_strategy(
     strategy: Option<&ParameterSpecialConversion>,
 ) -> Option<&ParameterSpecialConversion> {
-    match strategy {
-        Some(ParameterSpecialConversion::Out { .. }) => None,
-        other => other,
-    }
+    strategy
+}
+
+fn indent_lines(lines: &[String], indent: &str) -> Vec<String> {
+    lines
+        .iter()
+        .map(|line| format!("{}{}", indent, line))
+        .collect()
 }
 
 fn combine_lean_return_type(base_ty: &str, omit_base: bool, out_types: &[String]) -> String {

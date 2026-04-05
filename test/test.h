@@ -460,6 +460,27 @@ static inline void string_take_null(const char* str) {
     assert(str == NULL);
 }
 
+static inline void reference_int_take(int* value) {
+    assert(*value == 42);
+}
+
+static inline void reference_int_take_null(int* value) {
+    assert(value == NULL);
+}
+
+static inline void reference_int_take_some(int* value) {
+    assert(*value == 7);
+}
+
+static inline void reference_string_take_with_length(char** value, size_t length) {
+    assert(length == 13);
+    assert(strcmp(*value, "Hello, World!") == 0);
+}
+
+static inline void reference_nested_int_take(int** value) {
+    assert(**value == 77);
+}
+
 // -- Structs --
 
 typedef struct int_values {

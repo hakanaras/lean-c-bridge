@@ -34,9 +34,17 @@ pub struct ParameterChoices {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParameterSpecialConversion {
+    /// Pass a pointer to the passed value to the original function instead of passing the value directly.
+    Reference {
+        /// Whether to use `Option` and pass `null` when `none`.
+        #[serde(default)]
+        nullable: bool,
+        /// Optional conversion for the pointed value.
+        element_conversion: Option<Box<ParameterSpecialConversion>>,
+    },
     /// Automatically pass a char* from a Lean String, and free it after the call
     String {
-        /// Whether to use `Option String` instead of `String` and pass `null` when `none`.
+        /// Whether to use `Option` and pass `null` when `none`.
         #[serde(default)]
         nullable: bool,
     },
@@ -49,7 +57,7 @@ pub enum ParameterSpecialConversion {
     },
     /// Pass a pointer to a newly allocated array containing the elements of a Lean Array, and free it after the call
     Array {
-        /// Whether to use `Option (Array ...)` instead of `Array ...` and pass `null` when `none`.
+        /// Whether to use `Option` and pass `null` when `none`.
         #[serde(default)]
         nullable: bool,
         /// Optional conversion for the individual elements of the array

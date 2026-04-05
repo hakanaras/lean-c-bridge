@@ -72,6 +72,7 @@ pub enum FormPath {
     Omit,
     NoIo,
     ParamConversion(usize),
+    ParamReferenceNullable(usize),
     ParamStringNullable(usize),
     ParamStringBufferSize(usize),
     ParamArrayNullable(usize),
@@ -391,6 +392,38 @@ impl App {
             if let Some(pc) = param_choices {
                 if let Some(ref cs) = pc.conversion_strategy {
                     match cs {
+                        ParameterSpecialConversion::Reference {
+                            nullable,
+                            element_conversion,
+                        } => {
+                            items.push(FormItem {
+                                label: "Nullable".to_string(),
+                                kind: FormItemKind::Checkbox {
+                                    checked: *nullable,
+                                    enabled: !omit,
+                                },
+                                path: FormPath::ParamReferenceNullable(i),
+                                indent: 2,
+                            });
+
+                            let elem_options =
+                                reference_element_conversion_options(get_pointee(&param.ty));
+                            let elem_selected = element_conversion
+                                .as_ref()
+                                .map(|ec| elem_conversion_to_index(ec, &elem_options))
+                                .unwrap_or(0);
+
+                            items.push(FormItem {
+                                label: "Pointed value conversion".to_string(),
+                                kind: FormItemKind::Selector {
+                                    options: elem_options,
+                                    selected: elem_selected,
+                                    enabled: !omit,
+                                },
+                                path: FormPath::ParamElementConversion(i),
+                                indent: 2,
+                            });
+                        }
                         ParameterSpecialConversion::String { nullable } => {
                             items.push(FormItem {
                                 label: "Nullable".to_string(),
@@ -734,6 +767,16 @@ impl App {
                     *nullable = checked;
                 }
             }
+            FormPath::ParamReferenceNullable(i) => {
+                if let Some(ParameterSpecialConversion::Reference { nullable, .. }) = self
+                    .form_choices
+                    .parameters[*i]
+                    .conversion_strategy
+                    .as_mut()
+                {
+                    *nullable = checked;
+                }
+            }
             FormPath::ParamArrayNullable(i) => {
                 if let Some(ParameterSpecialConversion::Array { nullable, .. }) = self
                     .form_choices
@@ -785,6 +828,10 @@ impl App {
                 let i = *i;
                 if i < self.form_choices.parameters.len() {
                     self.form_choices.parameters[i].conversion_strategy = match option {
+                        "Reference" => Some(ParameterSpecialConversion::Reference {
+                            nullable: false,
+                            element_conversion: None,
+                        }),
                         "String" => Some(ParameterSpecialConversion::String { nullable: false }),
                         "StringBuffer" => {
                             Some(ParameterSpecialConversion::StringBuffer { buffer_size: 1024 })
@@ -819,12 +866,25 @@ impl App {
                 if i < self.form_choices.parameters.len() {
                     if let Some(ref mut cs) = self.form_choices.parameters[i].conversion_strategy {
                         let new_elem = match option {
+                            "Reference" => Some(Box::new(ParameterSpecialConversion::Reference {
+                                nullable: false,
+                                element_conversion: None,
+                            })),
                             "String" => Some(Box::new(ParameterSpecialConversion::String {
                                 nullable: false,
+                            })),
+                            "Array" => Some(Box::new(ParameterSpecialConversion::Array {
+                                nullable: false,
+                                element_conversion: None,
                             })),
                             _ => None,
                         };
                         match cs {
+                            ParameterSpecialConversion::Reference {
+                                element_conversion,
+                                ..
+                            }
+                            |
                             ParameterSpecialConversion::Array {
                                 element_conversion,
                                 ..
@@ -1147,14 +1207,7 @@ fn is_integer(ty: &CType) -> bool {
 fn has_collection_conversion(param_index: usize, params: &[ParameterChoices]) -> bool {
     params.iter().enumerate().any(|(j, pc)| {
         j != param_index
-            && pc.conversion_strategy.as_ref().is_some_and(|cs| {
-                matches!(
-                    cs,
-                    ParameterSpecialConversion::String { .. }
-                        | ParameterSpecialConversion::StringBuffer { .. }
-                        | ParameterSpecialConversion::Array { .. }
-                )
-            })
+            && strategy_provides_length(pc.conversion_strategy.as_ref())
     })
 }
 
@@ -1163,15 +1216,7 @@ fn eligible_length_targets(param_index: usize, params: &[ParameterChoices]) -> V
         .iter()
         .enumerate()
         .filter(|(j, pc)| {
-            *j != param_index
-                && pc.conversion_strategy.as_ref().is_some_and(|cs| {
-                    matches!(
-                        cs,
-                        ParameterSpecialConversion::String { .. }
-                            | ParameterSpecialConversion::StringBuffer { .. }
-                            | ParameterSpecialConversion::Array { .. }
-                    )
-                })
+            *j != param_index && strategy_provides_length(pc.conversion_strategy.as_ref())
         })
         .map(|(j, _)| j)
         .collect()
@@ -1188,6 +1233,7 @@ fn param_conversion_options(
         options.push("StringBuffer".to_string());
     }
     if is_pointer(ty) {
+        options.push("Reference".to_string());
         options.push("Array".to_string());
         options.push("Out".to_string());
     }
@@ -1208,6 +1254,36 @@ fn element_conversion_options(pointee: Option<&CType>) -> Vec<String> {
     options
 }
 
+fn reference_element_conversion_options(pointee: Option<&CType>) -> Vec<String> {
+    let mut options = vec!["None".to_string()];
+    if let Some(ty) = pointee {
+        if is_char_pointer(ty) {
+            options.push("String".to_string());
+        }
+        if is_pointer(ty) {
+            options.push("Reference".to_string());
+            options.push("Array".to_string());
+        }
+    }
+    options
+}
+
+fn strategy_provides_length(strategy: Option<&ParameterSpecialConversion>) -> bool {
+    match strategy {
+        Some(ParameterSpecialConversion::String { .. })
+        | Some(ParameterSpecialConversion::StringBuffer { .. })
+        | Some(ParameterSpecialConversion::Array { .. }) => true,
+        Some(ParameterSpecialConversion::Reference {
+            element_conversion,
+            ..
+        }) => strategy_provides_length(element_conversion.as_deref()),
+        Some(ParameterSpecialConversion::Out { .. })
+        | Some(ParameterSpecialConversion::Length { .. })
+        | Some(ParameterSpecialConversion::StaticExpr { .. })
+        | None => false,
+    }
+}
+
 fn return_conversion_options(ty: Option<&CType>) -> Vec<String> {
     let mut options = vec!["None".to_string()];
     if ty.is_some_and(is_char_pointer) {
@@ -1224,6 +1300,7 @@ fn return_conversion_options(ty: Option<&CType>) -> Vec<String> {
 
 fn conversion_to_index(cs: &ParameterSpecialConversion, options: &[String]) -> usize {
     let name = match cs {
+        ParameterSpecialConversion::Reference { .. } => "Reference",
         ParameterSpecialConversion::String { .. } => "String",
         ParameterSpecialConversion::StringBuffer { .. } => "StringBuffer",
         ParameterSpecialConversion::Array { .. } => "Array",
@@ -1236,7 +1313,9 @@ fn conversion_to_index(cs: &ParameterSpecialConversion, options: &[String]) -> u
 
 fn elem_conversion_to_index(cs: &ParameterSpecialConversion, options: &[String]) -> usize {
     let name = match cs {
+        ParameterSpecialConversion::Reference { .. } => "Reference",
         ParameterSpecialConversion::String { .. } => "String",
+        ParameterSpecialConversion::Array { .. } => "Array",
         _ => "None",
     };
     options.iter().position(|o| o == name).unwrap_or(0)

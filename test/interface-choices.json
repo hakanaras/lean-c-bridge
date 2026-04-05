@@ -540,6 +540,102 @@
       "return_value": null
     },
     {
+      "name": "reference_int_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Reference": {
+              "nullable": false,
+              "element_conversion": null
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "reference_int_take_null",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Reference": {
+              "nullable": true,
+              "element_conversion": null
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "reference_int_take_some",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Reference": {
+              "nullable": true,
+              "element_conversion": null
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "reference_string_take_with_length",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Reference": {
+              "nullable": false,
+              "element_conversion": {
+                "String": {
+                  "nullable": false
+                }
+              }
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "reference_nested_int_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Reference": {
+              "nullable": false,
+              "element_conversion": {
+                "Reference": {
+                  "nullable": false,
+                  "element_conversion": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
       "name": "alloc_string_return_nullable",
       "omit": false,
       "no_io": false,

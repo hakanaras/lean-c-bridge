@@ -191,11 +191,18 @@ def test_strings : IO Unit := do
   assert! (<- alloc_string_return_nullable 0) == .some ""
   assert! (<- alloc_string_return_nullable 13) == .some "Hello, World!"
 
-  def test_dereference_returns : IO Unit := do
-    assert! (<- dereference_int_return) == 123
-    assert! (<- dereference_int_return_nullable (-1)) == .none
-    assert! (<- dereference_int_return_nullable 7) == .some 8
-    assert! (<- dereference_string_return) == "Dereference"
+def test_reference_params : IO Unit := do
+  reference_int_take 42
+  reference_int_take_null .none
+  reference_int_take_some (.some 7)
+  reference_string_take_with_length "Hello, World!"
+  reference_nested_int_take 77
+
+def test_dereference_returns : IO Unit := do
+  assert! (<- dereference_int_return) == 123
+  assert! (<- dereference_int_return_nullable (-1)) == .none
+  assert! (<- dereference_int_return_nullable 7) == .some 8
+  assert! (<- dereference_string_return) == "Dereference"
 
 def test_out_params : IO Unit := do
   let (i1, i2, s) <- out_tuple_test 42
@@ -216,6 +223,7 @@ def main : IO Unit := do
   test_arrays
   test_structs
   test_strings
+  test_reference_params
   test_dereference_returns
   test_out_params
   static_expr_take

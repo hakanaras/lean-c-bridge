@@ -12,8 +12,8 @@ cargo run -- \
   --lean-module-name='Test' \
   --output-dir='./test/Lean/' \
   --interface-choices='./test/interface-choices.json' \
-  --ui \
   'test/test.h'
+  # --ui \
 
 cd test/Lean
 lake exec Main

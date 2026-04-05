@@ -1,168 +1,30 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Write,
-};
-
 use crate::{
-    clang::types::{CDeclaration, CEnumVariant, CField, CFunction, CType},
+    clang::types::{CEnumVariant, CFunction, CType},
     generator::{c_context::CContext, lean_context::LeanContext},
     options::interface_choices::{
         FunctionChoices, ParameterSpecialConversion, ReturnValueSpecialConversion,
     },
 };
-
+use std::collections::HashMap;
 pub mod c_context;
+mod c_render;
+mod ident;
 pub mod lean_context;
+mod predicates;
 mod type_declarations;
-
-#[derive(Debug, Clone, Default)]
-pub struct TypeRegistry {
-    structs: HashMap<String, Vec<CField>>,
-    enums: HashMap<String, Vec<CEnumVariant>>,
-    typedefs: HashMap<String, CType>,
-    unions: HashSet<String>,
-}
-
-impl TypeRegistry {
-    pub fn from_declarations(declarations: &[CDeclaration]) -> Self {
-        let mut registry = Self::default();
-
-        for declaration in declarations {
-            match declaration {
-                CDeclaration::Struct {
-                    name: Some(name),
-                    fields,
-                } => {
-                    registry.structs.insert(name.clone(), fields.clone());
-                }
-                CDeclaration::Union {
-                    name: Some(name), ..
-                } => {
-                    registry.unions.insert(name.clone());
-                }
-                CDeclaration::Enum {
-                    name: Some(name),
-                    variants,
-                } => {
-                    registry.enums.insert(name.clone(), variants.clone());
-                }
-                CDeclaration::Typedef {
-                    name,
-                    underlying_type,
-                } => {
-                    registry
-                        .typedefs
-                        .insert(name.clone(), underlying_type.clone());
-                }
-                _ => {}
-            }
-        }
-
-        registry
-    }
-
-    fn resolve_alias_type(&self, ty: &CType) -> CType {
-        self.resolve_alias_type_inner(ty, &mut HashSet::new())
-    }
-
-    fn resolve_alias_type_inner(&self, ty: &CType, seen: &mut HashSet<String>) -> CType {
-        match ty {
-            CType::Typedef(name) => {
-                if !seen.insert(name.clone()) {
-                    return ty.clone();
-                }
-
-                let resolved = self
-                    .typedefs
-                    .get(name)
-                    .map(|underlying| self.resolve_alias_type_inner(underlying, seen))
-                    .unwrap_or_else(|| ty.clone());
-
-                seen.remove(name);
-                resolved
-            }
-            CType::Pointer { is_const, pointee } => CType::Pointer {
-                is_const: *is_const,
-                pointee: Box::new(self.resolve_alias_type_inner(pointee, seen)),
-            },
-            CType::Array { element, size } => CType::Array {
-                element: Box::new(self.resolve_alias_type_inner(element, seen)),
-                size: *size,
-            },
-            CType::IncompleteArray { element } => CType::IncompleteArray {
-                element: Box::new(self.resolve_alias_type_inner(element, seen)),
-            },
-            CType::FunctionPointer {
-                return_type,
-                parameters,
-            } => CType::FunctionPointer {
-                return_type: Box::new(self.resolve_alias_type_inner(return_type, seen)),
-                parameters: parameters
-                    .iter()
-                    .map(|parameter| self.resolve_alias_type_inner(parameter, seen))
-                    .collect(),
-            },
-            _ => ty.clone(),
-        }
-    }
-
-    fn named_type_name(&self, ty: &CType) -> Option<String> {
-        match ty {
-            CType::Struct(name) | CType::Enum(name) | CType::Union(name) | CType::Typedef(name) => {
-                Some(name.clone())
-            }
-            _ => None,
-        }
-    }
-
-    fn struct_info<'a>(&'a self, ty: &CType) -> Option<(String, &'a [CField])> {
-        let lean_name = self.named_type_name(ty)?;
-        match self.resolve_alias_type(ty) {
-            CType::Struct(name) => self
-                .structs
-                .get(&name)
-                .map(|fields| (sanitize_lean_type_name(&lean_name), fields.as_slice())),
-            _ => None,
-        }
-    }
-
-    fn enum_info<'a>(&'a self, ty: &CType) -> Option<(String, &'a [CEnumVariant])> {
-        let lean_name = self.named_type_name(ty)?;
-        match self.resolve_alias_type(ty) {
-            CType::Enum(name) => self
-                .enums
-                .get(&name)
-                .map(|variants| (sanitize_lean_type_name(&lean_name), variants.as_slice())),
-            _ => None,
-        }
-    }
-
-    fn is_char_pointer_like(&self, ty: &CType) -> bool {
-        matches!(
-            self.resolve_alias_type(ty),
-            CType::Pointer { pointee, .. } if matches!(*pointee, CType::Char)
-        )
-    }
-
-    fn pointer_element_type(&self, ty: &CType) -> Option<CType> {
-        match self.resolve_alias_type(ty) {
-            CType::Pointer { pointee, .. } => Some(*pointee),
-            CType::IncompleteArray { element } => Some(*element),
-            CType::Array {
-                element,
-                size: None,
-            } => Some(*element),
-            _ => None,
-        }
-    }
-
-    fn is_pointer_like(&self, ty: &CType) -> bool {
-        matches!(
-            self.resolve_alias_type(ty),
-            CType::Pointer { .. } | CType::IncompleteArray { .. } | CType::Array { size: None, .. }
-        )
-    }
-}
+mod type_registry;
+pub use self::type_registry::TypeRegistry;
+use self::{
+    c_render::{
+        deallocator_name, render_array_declaration, render_c_function, render_c_type,
+        render_zero_initialized_declaration,
+    },
+    ident::{
+        sanitize_c_ident, sanitize_lean_ctor_name, sanitize_lean_field_name,
+        sanitize_lean_type_name,
+    },
+    predicates::{can_be_no_io, is_lean_float_return, is_lean_float_type},
+};
 
 #[derive(Default)]
 struct NameGen {
@@ -622,21 +484,6 @@ fn emit_omitted_function(
     );
 }
 
-fn render_c_function(
-    name: &str,
-    return_type: &str,
-    signature: &str,
-    body_lines: &[String],
-) -> String {
-    let mut source = String::new();
-    let _ = writeln!(&mut source, "{} {}({}) {{", return_type, name, signature);
-    for line in body_lines {
-        let _ = writeln!(&mut source, "    {}", line);
-    }
-    source.push('}');
-    source
-}
-
 fn adapter_parameter_c_type(parameter: &LeanParam) -> &'static str {
     if parameter.ty == "Float" {
         "double"
@@ -657,18 +504,6 @@ fn adapter_return_c_type(
     } else {
         "lean_obj_res".to_string()
     }
-}
-
-fn is_lean_float_return(
-    ty: &CType,
-    strategy: Option<&ReturnValueSpecialConversion>,
-    registry: &TypeRegistry,
-) -> bool {
-    strategy.is_none()
-        && matches!(
-            registry.resolve_alias_type(ty),
-            CType::Float | CType::Double | CType::LongDouble
-        )
 }
 
 fn parameter_strategy<'a>(
@@ -1089,13 +924,6 @@ fn struct_helper_return_c_type(ty: &CType, registry: &TypeRegistry) -> String {
     } else {
         "lean_obj_res".to_string()
     }
-}
-
-fn is_lean_float_type(ty: &CType, registry: &TypeRegistry) -> bool {
-    matches!(
-        registry.resolve_alias_type(ty),
-        CType::Float | CType::Double | CType::LongDouble
-    )
 }
 
 fn prepare_parameter_value(
@@ -2055,189 +1883,5 @@ fn struct_getter_name(struct_name: &str, field_name: &str) -> String {
         "ffi_get_{}_{}",
         sanitize_c_ident(field_name),
         sanitize_c_ident(struct_name)
-    )
-}
-
-fn render_c_type(ty: &CType) -> String {
-    match ty {
-        CType::Void => "void".to_string(),
-        CType::Bool => "bool".to_string(),
-        CType::Char => "char".to_string(),
-        CType::UChar => "unsigned char".to_string(),
-        CType::Short => "short".to_string(),
-        CType::UShort => "unsigned short".to_string(),
-        CType::Int => "int".to_string(),
-        CType::UInt => "unsigned int".to_string(),
-        CType::Long => "long".to_string(),
-        CType::ULong => "unsigned long".to_string(),
-        CType::LongLong => "long long".to_string(),
-        CType::ULongLong => "unsigned long long".to_string(),
-        CType::Float => "float".to_string(),
-        CType::Double => "double".to_string(),
-        CType::LongDouble => "long double".to_string(),
-        CType::SizeT => "size_t".to_string(),
-        CType::PtrdiffT => "ptrdiff_t".to_string(),
-        CType::Pointer { is_const, pointee } => {
-            if *is_const {
-                format!("const {}*", render_c_type(pointee))
-            } else {
-                format!("{}*", render_c_type(pointee))
-            }
-        }
-        CType::Array { element, size } => match size {
-            Some(size) => format!("{}[{}]", render_c_type(element), size),
-            None => format!("{}[]", render_c_type(element)),
-        },
-        CType::Struct(name) => format!("struct {}", name),
-        CType::Union(name) => format!("union {}", name),
-        CType::Enum(name) => format!("enum {}", name),
-        CType::Typedef(name) => name.clone(),
-        CType::FunctionPointer {
-            return_type,
-            parameters,
-        } => format!(
-            "{}(*)({})",
-            render_c_type(return_type),
-            parameters
-                .iter()
-                .map(render_c_type)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        CType::IncompleteArray { element } => format!("{}[]", render_c_type(element)),
-        CType::Unknown(name) => name.clone(),
-    }
-}
-
-fn render_array_declaration(element_ty: &CType, name: &str, size: usize) -> String {
-    format!("{} {}[{}]", render_c_type(element_ty), name, size)
-}
-
-fn render_zero_initialized_declaration(ty: &CType, name: &str) -> String {
-    match ty {
-        CType::Array {
-            element,
-            size: Some(size),
-        } => format!("{} = {{0}}", render_array_declaration(element, name, *size)),
-        _ => format!("{} {} = {{0}}", render_c_type(ty), name),
-    }
-}
-
-fn sanitize_c_ident(name: &str) -> String {
-    let mut sanitized = String::new();
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            sanitized.push(ch);
-        } else {
-            sanitized.push('_');
-        }
-    }
-
-    if sanitized.is_empty() {
-        sanitized.push_str("ffi_value");
-    }
-    if sanitized
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_digit())
-    {
-        sanitized.insert_str(0, "ffi_");
-    }
-    sanitized
-}
-
-fn sanitize_lean_type_name(name: &str) -> String {
-    let mut sanitized = sanitize_c_ident(name);
-    if is_lean_keyword(&sanitized) {
-        sanitized.insert_str(0, "Ffi");
-    }
-    sanitized
-}
-
-fn sanitize_lean_field_name(name: &str) -> String {
-    let mut sanitized = sanitize_c_ident(name);
-    if is_lean_keyword(&sanitized) {
-        sanitized.insert_str(0, "ffi_");
-    }
-    sanitized
-}
-
-fn sanitize_lean_ctor_name(name: &str) -> String {
-    let mut sanitized = sanitize_lean_field_name(name);
-    if sanitized == "other" {
-        sanitized = "other_".to_string();
-    }
-    sanitized
-}
-
-fn deallocator_name(free_function: Option<&str>) -> &str {
-    match free_function.map(str::trim).filter(|name| !name.is_empty()) {
-        Some(name) => name,
-        None => "free",
-    }
-}
-
-fn is_lean_keyword(name: &str) -> bool {
-    matches!(
-        name,
-        "Type"
-            | "abbrev"
-            | "axiom"
-            | "by"
-            | "class"
-            | "def"
-            | "do"
-            | "else"
-            | "end"
-            | "export"
-            | "forall"
-            | "fun"
-            | "if"
-            | "import"
-            | "inductive"
-            | "in"
-            | "instance"
-            | "let"
-            | "match"
-            | "mut"
-            | "namespace"
-            | "opaque"
-            | "open"
-            | "private"
-            | "structure"
-            | "then"
-            | "theorem"
-            | "where"
-    )
-}
-
-fn can_be_no_io(function: &CFunction, registry: &TypeRegistry) -> bool {
-    function
-        .parameters
-        .iter()
-        .all(|parameter| is_no_io_primitive(&registry.resolve_alias_type(&parameter.ty)))
-        && is_no_io_primitive(&registry.resolve_alias_type(&function.return_type))
-}
-
-fn is_no_io_primitive(ty: &CType) -> bool {
-    matches!(
-        ty,
-        CType::Bool
-            | CType::Char
-            | CType::UChar
-            | CType::Short
-            | CType::UShort
-            | CType::Int
-            | CType::UInt
-            | CType::Long
-            | CType::ULong
-            | CType::LongLong
-            | CType::ULongLong
-            | CType::Float
-            | CType::Double
-            | CType::LongDouble
-            | CType::SizeT
-            | CType::PtrdiffT
-            | CType::Enum(_)
     )
 }

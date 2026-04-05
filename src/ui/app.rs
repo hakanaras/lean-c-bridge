@@ -59,6 +59,14 @@ pub enum FormItemKind {
 }
 
 #[derive(Clone, PartialEq)]
+pub enum ReturnEditorTarget {
+    Return,
+    ReturnElement,
+    ParamOut(usize),
+    ParamOutElement(usize),
+}
+
+#[derive(Clone, PartialEq)]
 pub enum FormPath {
     None,
     Omit,
@@ -68,27 +76,15 @@ pub enum FormPath {
     ParamStringBufferSize(usize),
     ParamArrayNullable(usize),
     ParamElementConversion(usize),
-    ParamOutConversion(usize),
-    ParamOutStringNullable(usize),
-    ParamOutArrayNullable(usize),
-    ParamOutStringFree(usize),
-    ParamOutStringFreeFunction(usize),
     ParamLengthOf(usize),
     ParamStaticExpr(usize),
     ParamStaticPreStmt(usize),
     ParamStaticPostStmt(usize),
-    ReturnConversion,
-    ReturnStringNullable,
-    ReturnArrayNullable,
-    ReturnElementConversion,
-    ReturnArrayFree,
-    ReturnStringFree,
-    ReturnStringFreeFunction,
-    ReturnArrayFreeFunction,
-    ReturnElementStringNullable,
-    ReturnElementArrayNullable,
-    ReturnElementStringFree,
-    ReturnElementStringFreeFunction,
+    ReturnConversionSelector(ReturnEditorTarget),
+    ReturnNullable(ReturnEditorTarget),
+    ReturnFree(ReturnEditorTarget),
+    ReturnFreeFunction(ReturnEditorTarget),
+    ReturnElementConversion(ReturnEditorTarget),
 }
 
 impl App {
@@ -449,7 +445,9 @@ impl App {
                             });
                         }
                         ParameterSpecialConversion::Out { element_conversion } => {
-                            let out_options = return_conversion_options(get_pointee(&param.ty));
+                            let out_target = ReturnEditorTarget::ParamOut(i);
+                            let out_ty = get_pointee(&param.ty);
+                            let out_options = return_conversion_options(out_ty);
                             let out_selected = element_conversion
                                 .as_deref()
                                 .map(|conversion| {
@@ -464,66 +462,20 @@ impl App {
                                     selected: out_selected,
                                     enabled: !omit,
                                 },
-                                path: FormPath::ParamOutConversion(i),
+                                path: FormPath::ReturnConversionSelector(out_target.clone()),
                                 indent: 2,
                             });
 
                             if let Some(conversion) = element_conversion.as_deref() {
-                                match conversion {
-                                    ReturnValueSpecialConversion::String {
-                                        nullable,
-                                        free,
-                                        free_function,
-                                    } => {
-                                        items.push(FormItem {
-                                            label: "Nullable".to_string(),
-                                            kind: FormItemKind::Checkbox {
-                                                checked: *nullable,
-                                                enabled: !omit,
-                                            },
-                                            path: FormPath::ParamOutStringNullable(i),
-                                            indent: 3,
-                                        });
-
-                                        items.push(FormItem {
-                                            label: "Free after conversion".to_string(),
-                                            kind: FormItemKind::Checkbox {
-                                                checked: *free,
-                                                enabled: !omit,
-                                            },
-                                            path: FormPath::ParamOutStringFree(i),
-                                            indent: 3,
-                                        });
-
-                                        if *free {
-                                            items.push(FormItem {
-                                                label: "Free function".to_string(),
-                                                kind: FormItemKind::TextInput {
-                                                    value: free_function
-                                                        .clone()
-                                                        .unwrap_or_default(),
-                                                    enabled: !omit,
-                                                },
-                                                path: FormPath::ParamOutStringFreeFunction(i),
-                                                indent: 4,
-                                            });
-                                        }
-                                    }
-                                    ReturnValueSpecialConversion::NullTerminatedArray {
-                                        nullable,
-                                        ..
-                                    } => {
-                                        items.push(FormItem {
-                                            label: "Nullable".to_string(),
-                                            kind: FormItemKind::Checkbox {
-                                                checked: *nullable,
-                                                enabled: !omit,
-                                            },
-                                            path: FormPath::ParamOutArrayNullable(i),
-                                            indent: 3,
-                                        });
-                                    }
-                                }
+                                push_return_conversion_items(
+                                    &mut items,
+                                    conversion,
+                                    out_ty,
+                                    out_target,
+                                    !omit,
+                                    3,
+                                    true,
+                                );
                             }
                         }
                         ParameterSpecialConversion::Length { of_param_index } => {
@@ -601,6 +553,8 @@ impl App {
                 .map(|conversion| return_conversion_to_index(conversion, &ret_options))
                 .unwrap_or(0);
 
+            let return_target = ReturnEditorTarget::Return;
+
             items.push(FormItem {
                 label: "Conversion".to_string(),
                 kind: FormItemKind::Selector {
@@ -608,158 +562,20 @@ impl App {
                     selected: ret_selected,
                     enabled: !omit,
                 },
-                path: FormPath::ReturnConversion,
+                path: FormPath::ReturnConversionSelector(return_target.clone()),
                 indent: 1,
             });
 
-            if let Some(ReturnValueSpecialConversion::String {
-                nullable,
-                free,
-                free_function,
-            }) = &choices.return_value
-            {
-                items.push(FormItem {
-                    label: "Nullable".to_string(),
-                    kind: FormItemKind::Checkbox {
-                        checked: *nullable,
-                        enabled: !omit,
-                    },
-                    path: FormPath::ReturnStringNullable,
-                    indent: 2,
-                });
-
-                items.push(FormItem {
-                    label: "Free after conversion".to_string(),
-                    kind: FormItemKind::Checkbox {
-                        checked: *free,
-                        enabled: !omit,
-                    },
-                    path: FormPath::ReturnStringFree,
-                    indent: 2,
-                });
-
-                if *free {
-                    items.push(FormItem {
-                        label: "Free function".to_string(),
-                        kind: FormItemKind::TextInput {
-                            value: free_function.clone().unwrap_or_default(),
-                            enabled: !omit,
-                        },
-                        path: FormPath::ReturnStringFreeFunction,
-                        indent: 3,
-                    });
-                }
-            }
-
-            if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                nullable,
-                element_conversion,
-                free_array_after_conversion,
-                free_function,
-            }) = &choices.return_value
-            {
-                items.push(FormItem {
-                    label: "Nullable".to_string(),
-                    kind: FormItemKind::Checkbox {
-                        checked: *nullable,
-                        enabled: !omit,
-                    },
-                    path: FormPath::ReturnArrayNullable,
-                    indent: 2,
-                });
-
-                items.push(FormItem {
-                    label: "Free array after conversion".to_string(),
-                    kind: FormItemKind::Checkbox {
-                        checked: *free_array_after_conversion,
-                        enabled: !omit,
-                    },
-                    path: FormPath::ReturnArrayFree,
-                    indent: 2,
-                });
-
-                if *free_array_after_conversion {
-                    items.push(FormItem {
-                        label: "Free function".to_string(),
-                        kind: FormItemKind::TextInput {
-                            value: free_function.clone().unwrap_or_default(),
-                            enabled: !omit,
-                        },
-                        path: FormPath::ReturnArrayFreeFunction,
-                        indent: 3,
-                    });
-                }
-
-                let element_ty = get_pointee(&func.return_type);
-                let element_options = return_conversion_options(element_ty);
-                let element_selected = element_conversion
-                    .as_ref()
-                    .map(|conversion| return_conversion_to_index(conversion, &element_options))
-                    .unwrap_or(0);
-
-                items.push(FormItem {
-                    label: "Element conversion".to_string(),
-                    kind: FormItemKind::Selector {
-                        options: element_options,
-                        selected: element_selected,
-                        enabled: !omit,
-                    },
-                    path: FormPath::ReturnElementConversion,
-                    indent: 2,
-                });
-
-                if let Some(conversion) = element_conversion.as_deref() {
-                    match conversion {
-                        ReturnValueSpecialConversion::String {
-                            nullable,
-                            free,
-                            free_function,
-                        } => {
-                            items.push(FormItem {
-                                label: "Nullable".to_string(),
-                                kind: FormItemKind::Checkbox {
-                                    checked: *nullable,
-                                    enabled: !omit,
-                                },
-                                path: FormPath::ReturnElementStringNullable,
-                                indent: 3,
-                            });
-
-                            items.push(FormItem {
-                                label: "Free element after conversion".to_string(),
-                                kind: FormItemKind::Checkbox {
-                                    checked: *free,
-                                    enabled: !omit,
-                                },
-                                path: FormPath::ReturnElementStringFree,
-                                indent: 3,
-                            });
-
-                            if *free {
-                                items.push(FormItem {
-                                    label: "Free function".to_string(),
-                                    kind: FormItemKind::TextInput {
-                                        value: free_function.clone().unwrap_or_default(),
-                                        enabled: !omit,
-                                    },
-                                    path: FormPath::ReturnElementStringFreeFunction,
-                                    indent: 4,
-                                });
-                            }
-                        }
-                        ReturnValueSpecialConversion::NullTerminatedArray { nullable, .. } => {
-                            items.push(FormItem {
-                                label: "Nullable".to_string(),
-                                kind: FormItemKind::Checkbox {
-                                    checked: *nullable,
-                                    enabled: !omit,
-                                },
-                                path: FormPath::ReturnElementArrayNullable,
-                                indent: 3,
-                            });
-                        }
-                    }
-                }
+            if let Some(conversion) = &choices.return_value {
+                push_return_conversion_items(
+                    &mut items,
+                    conversion,
+                    Some(&func.return_type),
+                    return_target,
+                    !omit,
+                    2,
+                    true,
+                );
             }
         } else {
             items.push(FormItem {
@@ -928,121 +744,34 @@ impl App {
                     *nullable = checked;
                 }
             }
-            FormPath::ParamOutStringNullable(i) => {
-                if let Some(ParameterSpecialConversion::Out { element_conversion }) = self
-                    .form_choices
-                    .parameters[*i]
-                    .conversion_strategy
-                    .as_mut()
+            FormPath::ReturnNullable(target) => {
+                if let Some(conversion) =
+                    get_return_conversion_mut(&mut self.form_choices, target)
                 {
-                    if let Some(ReturnValueSpecialConversion::String { nullable, .. }) =
-                        element_conversion.as_deref_mut()
-                    {
-                        *nullable = checked;
+                    match conversion {
+                        ReturnValueSpecialConversion::String { nullable, .. }
+                        | ReturnValueSpecialConversion::NullTerminatedArray { nullable, .. }
+                        | ReturnValueSpecialConversion::Dereference { nullable, .. } => {
+                            *nullable = checked;
+                        }
                     }
                 }
             }
-            FormPath::ParamOutArrayNullable(i) => {
-                if let Some(ParameterSpecialConversion::Out { element_conversion }) = self
-                    .form_choices
-                    .parameters[*i]
-                    .conversion_strategy
-                    .as_mut()
+            FormPath::ReturnFree(target) => {
+                if let Some(conversion) =
+                    get_return_conversion_mut(&mut self.form_choices, target)
                 {
-                    if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                        nullable,
-                        ..
-                    }) = element_conversion.as_deref_mut()
-                    {
-                        *nullable = checked;
-                    }
-                }
-            }
-            FormPath::ReturnStringNullable => {
-                if let Some(ReturnValueSpecialConversion::String {
-                    ref mut nullable,
-                    ..
-                }) = self.form_choices.return_value
-                {
-                    *nullable = checked;
-                }
-            }
-            FormPath::ReturnArrayNullable => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    nullable,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
-                {
-                    *nullable = checked;
-                }
-            }
-            FormPath::ReturnStringFree => {
-                if let Some(ReturnValueSpecialConversion::String { ref mut free, .. }) =
-                    self.form_choices.return_value
-                {
-                    *free = checked;
-                }
-            }
-            FormPath::ReturnArrayFree => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    free_array_after_conversion,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
-                {
-                    *free_array_after_conversion = checked;
-                }
-            }
-            FormPath::ReturnElementStringFree => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    element_conversion,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
-                {
-                    if let Some(ReturnValueSpecialConversion::String { free, .. }) =
-                        element_conversion.as_deref_mut()
-                    {
-                        *free = checked;
-                    }
-                }
-            }
-            FormPath::ReturnElementStringNullable => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    element_conversion,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
-                {
-                    if let Some(ReturnValueSpecialConversion::String { nullable, .. }) =
-                        element_conversion.as_deref_mut()
-                    {
-                        *nullable = checked;
-                    }
-                }
-            }
-            FormPath::ReturnElementArrayNullable => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    element_conversion,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
-                {
-                    if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                        nullable,
-                        ..
-                    }) = element_conversion.as_deref_mut()
-                    {
-                        *nullable = checked;
-                    }
-                }
-            }
-            FormPath::ParamOutStringFree(i) => {
-                if let Some(ParameterSpecialConversion::Out { element_conversion }) =
-                    self.form_choices.parameters[*i]
-                        .conversion_strategy
-                        .as_mut()
-                {
-                    if let Some(ReturnValueSpecialConversion::String { free, .. }) =
-                        element_conversion.as_deref_mut()
-                    {
-                        *free = checked;
+                    match conversion {
+                        ReturnValueSpecialConversion::String { free, .. }
+                        | ReturnValueSpecialConversion::Dereference { free, .. } => {
+                            *free = checked;
+                        }
+                        ReturnValueSpecialConversion::NullTerminatedArray {
+                            free_array_after_conversion,
+                            ..
+                        } => {
+                            *free_array_after_conversion = checked;
+                        }
                     }
                 }
             }
@@ -1107,31 +836,6 @@ impl App {
                     }
                 }
             }
-            FormPath::ParamOutConversion(i) => {
-                let i = *i;
-                if i < self.form_choices.parameters.len() {
-                    if let Some(ParameterSpecialConversion::Out { element_conversion }) =
-                        self.form_choices.parameters[i].conversion_strategy.as_mut()
-                    {
-                        *element_conversion = match option {
-                            "String" => Some(Box::new(ReturnValueSpecialConversion::String {
-                                nullable: false,
-                                free: false,
-                                free_function: None,
-                            })),
-                            "NullTerminatedArray" => Some(Box::new(
-                                ReturnValueSpecialConversion::NullTerminatedArray {
-                                    nullable: false,
-                                    element_conversion: None,
-                                    free_array_after_conversion: false,
-                                    free_function: None,
-                                },
-                            )),
-                            _ => None,
-                        };
-                    }
-                }
-            }
             FormPath::ParamLengthOf(i) => {
                 let i = *i;
                 if i < self.form_choices.parameters.len() {
@@ -1143,46 +847,30 @@ impl App {
                     }
                 }
             }
-            FormPath::ReturnConversion => {
-                self.form_choices.return_value = match option {
-                    "String" => Some(ReturnValueSpecialConversion::String {
-                        nullable: false,
-                        free: false,
-                        free_function: None,
-                    }),
-                    "NullTerminatedArray" => {
-                        Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                            nullable: false,
-                            element_conversion: None,
-                            free_array_after_conversion: false,
-                            free_function: None,
-                        })
-                    }
-                    _ => None,
-                };
+            FormPath::ReturnConversionSelector(target) => {
+                set_return_conversion(
+                    &mut self.form_choices,
+                    target,
+                    return_conversion_from_option(option),
+                );
             }
-            FormPath::ReturnElementConversion => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    element_conversion,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
+            FormPath::ReturnElementConversion(target) => {
+                if let Some(conversion) = get_return_conversion_mut(&mut self.form_choices, target)
                 {
-                    *element_conversion = match option {
-                        "String" => Some(Box::new(ReturnValueSpecialConversion::String {
-                            nullable: false,
-                            free: false,
-                            free_function: None,
-                        })),
-                        "NullTerminatedArray" => Some(Box::new(
-                            ReturnValueSpecialConversion::NullTerminatedArray {
-                                nullable: false,
-                                element_conversion: None,
-                                free_array_after_conversion: false,
-                                free_function: None,
-                            },
-                        )),
-                        _ => None,
-                    };
+                    match conversion {
+                        ReturnValueSpecialConversion::NullTerminatedArray {
+                            element_conversion,
+                            ..
+                        }
+                        | ReturnValueSpecialConversion::Dereference {
+                            element_conversion,
+                            ..
+                        } => {
+                            *element_conversion =
+                                return_conversion_from_option(option).map(Box::new);
+                        }
+                        ReturnValueSpecialConversion::String { .. } => {}
+                    }
                 }
             }
             _ => {}
@@ -1280,43 +968,18 @@ impl App {
                     };
                 }
             }
-            FormPath::ParamOutStringFreeFunction(i) => {
-                if let Some(ParameterSpecialConversion::Out { element_conversion }) =
-                    self.form_choices.parameters[i].conversion_strategy.as_mut()
+            FormPath::ReturnFreeFunction(target) => {
+                if let Some(conversion) = get_return_conversion_mut(&mut self.form_choices, &target)
                 {
-                    if let Some(ReturnValueSpecialConversion::String { free_function, .. }) =
-                        element_conversion.as_deref_mut()
-                    {
-                        *free_function = optional_function_name(&value);
-                    }
-                }
-            }
-            FormPath::ReturnStringFreeFunction => {
-                if let Some(ReturnValueSpecialConversion::String { free_function, .. }) =
-                    self.form_choices.return_value.as_mut()
-                {
-                    *free_function = optional_function_name(&value);
-                }
-            }
-            FormPath::ReturnArrayFreeFunction => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    free_function,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
-                {
-                    *free_function = optional_function_name(&value);
-                }
-            }
-            FormPath::ReturnElementStringFreeFunction => {
-                if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
-                    element_conversion,
-                    ..
-                }) = self.form_choices.return_value.as_mut()
-                {
-                    if let Some(ReturnValueSpecialConversion::String { free_function, .. }) =
-                        element_conversion.as_deref_mut()
-                    {
-                        *free_function = optional_function_name(&value);
+                    match conversion {
+                        ReturnValueSpecialConversion::String { free_function, .. }
+                        | ReturnValueSpecialConversion::NullTerminatedArray {
+                            free_function,
+                            ..
+                        }
+                        | ReturnValueSpecialConversion::Dereference { free_function, .. } => {
+                            *free_function = optional_function_name(&value);
+                        }
                     }
                 }
             }
@@ -1550,6 +1213,9 @@ fn return_conversion_options(ty: Option<&CType>) -> Vec<String> {
     if ty.is_some_and(is_char_pointer) {
         options.push("String".to_string());
     }
+    if ty.is_some_and(is_pointer) {
+        options.push("Dereference".to_string());
+    }
     if ty.is_some_and(is_pointer_to_pointer) {
         options.push("NullTerminatedArray".to_string());
     }
@@ -1579,9 +1245,276 @@ fn elem_conversion_to_index(cs: &ParameterSpecialConversion, options: &[String])
 fn return_conversion_to_index(cs: &ReturnValueSpecialConversion, options: &[String]) -> usize {
     let name = match cs {
         ReturnValueSpecialConversion::String { .. } => "String",
+        ReturnValueSpecialConversion::Dereference { .. } => "Dereference",
         ReturnValueSpecialConversion::NullTerminatedArray { .. } => "NullTerminatedArray",
     };
     options.iter().position(|o| o == name).unwrap_or(0)
+}
+
+fn return_conversion_from_option(option: &str) -> Option<ReturnValueSpecialConversion> {
+    match option {
+        "String" => Some(ReturnValueSpecialConversion::String {
+            nullable: false,
+            free: false,
+            free_function: None,
+        }),
+        "Dereference" => Some(ReturnValueSpecialConversion::Dereference {
+            nullable: false,
+            element_conversion: None,
+            free: false,
+            free_function: None,
+        }),
+        "NullTerminatedArray" => Some(ReturnValueSpecialConversion::NullTerminatedArray {
+            nullable: false,
+            element_conversion: None,
+            free_array_after_conversion: false,
+            free_function: None,
+        }),
+        _ => None,
+    }
+}
+
+fn get_return_conversion_mut<'a>(
+    choices: &'a mut FunctionChoices,
+    target: &ReturnEditorTarget,
+) -> Option<&'a mut ReturnValueSpecialConversion> {
+    match target {
+        ReturnEditorTarget::Return => choices.return_value.as_mut(),
+        ReturnEditorTarget::ReturnElement => match choices.return_value.as_mut()? {
+            ReturnValueSpecialConversion::NullTerminatedArray {
+                element_conversion,
+                ..
+            }
+            | ReturnValueSpecialConversion::Dereference {
+                element_conversion,
+                ..
+            } => element_conversion.as_deref_mut(),
+            ReturnValueSpecialConversion::String { .. } => None,
+        },
+        ReturnEditorTarget::ParamOut(i) => {
+            match choices.parameters.get_mut(*i)?.conversion_strategy.as_mut()? {
+                ParameterSpecialConversion::Out { element_conversion } => {
+                    element_conversion.as_deref_mut()
+                }
+                _ => None,
+            }
+        }
+        ReturnEditorTarget::ParamOutElement(i) => {
+            match choices.parameters.get_mut(*i)?.conversion_strategy.as_mut()? {
+                ParameterSpecialConversion::Out { element_conversion } => {
+                    match element_conversion.as_deref_mut()? {
+                        ReturnValueSpecialConversion::NullTerminatedArray {
+                            element_conversion,
+                            ..
+                        }
+                        | ReturnValueSpecialConversion::Dereference {
+                            element_conversion,
+                            ..
+                        } => element_conversion.as_deref_mut(),
+                        ReturnValueSpecialConversion::String { .. } => None,
+                    }
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
+fn set_return_conversion(
+    choices: &mut FunctionChoices,
+    target: &ReturnEditorTarget,
+    value: Option<ReturnValueSpecialConversion>,
+) {
+    match target {
+        ReturnEditorTarget::Return => {
+            choices.return_value = value;
+        }
+        ReturnEditorTarget::ReturnElement => {
+            if let Some(conversion) = choices.return_value.as_mut() {
+                match conversion {
+                    ReturnValueSpecialConversion::NullTerminatedArray {
+                        element_conversion,
+                        ..
+                    }
+                    | ReturnValueSpecialConversion::Dereference {
+                        element_conversion,
+                        ..
+                    } => {
+                        *element_conversion = value.map(Box::new);
+                    }
+                    ReturnValueSpecialConversion::String { .. } => {}
+                }
+            }
+        }
+        ReturnEditorTarget::ParamOut(i) => {
+            if let Some(ParameterSpecialConversion::Out { element_conversion }) = choices
+                .parameters
+                .get_mut(*i)
+                .and_then(|parameter| parameter.conversion_strategy.as_mut())
+            {
+                *element_conversion = value.map(Box::new);
+            }
+        }
+        ReturnEditorTarget::ParamOutElement(i) => {
+            if let Some(ParameterSpecialConversion::Out { element_conversion }) = choices
+                .parameters
+                .get_mut(*i)
+                .and_then(|parameter| parameter.conversion_strategy.as_mut())
+            {
+                if let Some(conversion) = element_conversion.as_deref_mut() {
+                    match conversion {
+                        ReturnValueSpecialConversion::NullTerminatedArray {
+                            element_conversion,
+                            ..
+                        }
+                        | ReturnValueSpecialConversion::Dereference {
+                            element_conversion,
+                            ..
+                        } => {
+                            *element_conversion = value.map(Box::new);
+                        }
+                        ReturnValueSpecialConversion::String { .. } => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn nested_return_editor_target(target: &ReturnEditorTarget) -> Option<ReturnEditorTarget> {
+    match target {
+        ReturnEditorTarget::Return => Some(ReturnEditorTarget::ReturnElement),
+        ReturnEditorTarget::ParamOut(i) => Some(ReturnEditorTarget::ParamOutElement(*i)),
+        ReturnEditorTarget::ReturnElement | ReturnEditorTarget::ParamOutElement(_) => None,
+    }
+}
+
+fn push_return_conversion_items(
+    items: &mut Vec<FormItem>,
+    conversion: &ReturnValueSpecialConversion,
+    ty: Option<&CType>,
+    target: ReturnEditorTarget,
+    enabled: bool,
+    indent: u16,
+    allow_nested_element_editor: bool,
+) {
+    let free_label = match conversion {
+        ReturnValueSpecialConversion::NullTerminatedArray { .. } => {
+            "Free array after conversion"
+        }
+        _ => "Free after conversion",
+    };
+
+    let (nullable, free, free_function, element_conversion, element_label) = match conversion {
+        ReturnValueSpecialConversion::String {
+            nullable,
+            free,
+            free_function,
+        } => (nullable, Some(free), free_function.as_ref(), None, None),
+        ReturnValueSpecialConversion::Dereference {
+            nullable,
+            element_conversion,
+            free,
+            free_function,
+        } => (
+            nullable,
+            Some(free),
+            free_function.as_ref(),
+            Some(element_conversion),
+            Some("Pointed value conversion"),
+        ),
+        ReturnValueSpecialConversion::NullTerminatedArray {
+            nullable,
+            element_conversion,
+            free_array_after_conversion,
+            free_function,
+        } => (
+            nullable,
+            Some(free_array_after_conversion),
+            free_function.as_ref(),
+            Some(element_conversion),
+            Some("Element conversion"),
+        ),
+    };
+
+    items.push(FormItem {
+        label: "Nullable".to_string(),
+        kind: FormItemKind::Checkbox {
+            checked: *nullable,
+            enabled,
+        },
+        path: FormPath::ReturnNullable(target.clone()),
+        indent,
+    });
+
+    if let Some(free) = free {
+        items.push(FormItem {
+            label: free_label.to_string(),
+            kind: FormItemKind::Checkbox {
+                checked: *free,
+                enabled,
+            },
+            path: FormPath::ReturnFree(target.clone()),
+            indent,
+        });
+
+        if *free {
+            items.push(FormItem {
+                label: "Free function".to_string(),
+                kind: FormItemKind::TextInput {
+                    value: free_function.cloned().unwrap_or_default(),
+                    enabled,
+                },
+                path: FormPath::ReturnFreeFunction(target.clone()),
+                indent: indent + 1,
+            });
+        }
+    }
+
+    if allow_nested_element_editor {
+        if let (Some(element_conversion), Some(element_label), Some(nested_target), Some(ty)) = (
+            element_conversion,
+            element_label,
+            nested_return_editor_target(&target),
+            ty,
+        ) {
+            let element_ty = get_pointee(ty);
+            let element_options = return_conversion_options(element_ty);
+            let element_selected = element_conversion
+                .as_ref()
+                .map(|nested| return_conversion_to_index(nested, &element_options))
+                .unwrap_or(0);
+
+            items.push(FormItem {
+                label: element_label.to_string(),
+                kind: FormItemKind::Selector {
+                    options: element_options,
+                    selected: element_selected,
+                    enabled,
+                },
+                path: FormPath::ReturnElementConversion(target.clone()),
+                indent,
+            });
+
+            if let Some(nested_conversion) = get_return_conversion_from_box(element_conversion) {
+                push_return_conversion_items(
+                    items,
+                    nested_conversion,
+                    element_ty,
+                    nested_target,
+                    enabled,
+                    indent + 1,
+                    false,
+                );
+            }
+        }
+    }
+}
+
+fn get_return_conversion_from_box(
+    conversion: &Option<Box<ReturnValueSpecialConversion>>,
+) -> Option<&ReturnValueSpecialConversion> {
+    conversion.as_deref()
 }
 
 fn is_pointer_to_pointer(ty: &CType) -> bool {

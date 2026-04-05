@@ -637,6 +637,31 @@ fn lean_type_for_return(
         return Err("string return conversion requires a char* return type".to_string());
     }
 
+    if let Some(ReturnValueSpecialConversion::Dereference {
+        nullable,
+        element_conversion,
+        ..
+    }) = strategy
+    {
+        let element_ty = registry
+            .pointer_element_type(ty)
+            .ok_or_else(|| "dereference return conversion requires a pointer return type".to_string())?;
+
+        let base_ty = lean_type_for_return(
+            lean_ctx,
+            c_ctx,
+            registry,
+            &element_ty,
+            element_conversion.as_deref(),
+        )?;
+
+        return Ok(if *nullable {
+            lean_option_type(&base_ty)
+        } else {
+            base_ty
+        });
+    }
+
     if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
         nullable,
         element_conversion, ..
@@ -1575,6 +1600,84 @@ fn prepare_return_value(
             pre,
             expr: result_var,
             post,
+            length_expr: None,
+        });
+    }
+
+    if let Some(ReturnValueSpecialConversion::Dereference {
+        nullable,
+        element_conversion,
+        free,
+        free_function,
+    }) = strategy
+    {
+        let element_ty = registry
+            .pointer_element_type(ty)
+            .ok_or_else(|| "dereference return conversion requires a pointer return type".to_string())?;
+
+        let source_expr = c_expr.unwrap();
+        let element_var = name_gen.next("deref_value");
+        let element_c_ty = render_c_type(&element_ty);
+        let nested = prepare_return_value(
+            lean_ctx,
+            c_ctx,
+            registry,
+            name_gen,
+            Some(&element_var),
+            &element_ty,
+            element_conversion.as_deref(),
+            true,
+        )?;
+
+        let result_var = name_gen.next("lean_result");
+        let nested_value_var = name_gen.next("deref_result");
+        let mut pre = Vec::new();
+
+        if *nullable {
+            pre.push(format!("lean_obj_res {} = lean_ffi_option_none();", result_var));
+            pre.push(format!("if ({} != NULL) {{", source_expr));
+            pre.push(format!("    {} {} = *{};", element_c_ty, element_var, source_expr));
+            pre.extend(nested.pre.into_iter().map(|line| format!("    {}", line)));
+            pre.push(format!("    lean_obj_res {} = {};", nested_value_var, nested.expr));
+            pre.extend(nested.post.into_iter().map(|line| format!("    {}", line)));
+            pre.push(format!(
+                "    {} = lean_ffi_option_some({});",
+                result_var, nested_value_var
+            ));
+            if *free {
+                pre.push(format!(
+                    "    {}((void *){});",
+                    deallocator_name(free_function.as_deref()),
+                    source_expr
+                ));
+            }
+            pre.push("}".to_string());
+        } else {
+            pre.push(format!("{} {} = *{};", element_c_ty, element_var, source_expr));
+            pre.extend(nested.pre);
+            pre.push(format!("lean_obj_res {} = {};", result_var, nested.expr));
+
+            let mut post = nested.post;
+            if *free {
+                post.push(format!(
+                    "{}((void *){});",
+                    deallocator_name(free_function.as_deref()),
+                    source_expr
+                ));
+            }
+
+            return Ok(PreparedValue {
+                pre,
+                expr: result_var,
+                post,
+                length_expr: None,
+            });
+        }
+
+        return Ok(PreparedValue {
+            pre,
+            expr: result_var,
+            post: Vec::new(),
             length_expr: None,
         });
     }

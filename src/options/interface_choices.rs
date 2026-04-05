@@ -90,6 +90,20 @@ pub enum ReturnValueSpecialConversion {
         /// Only has an effect if `free` is true.
         free_function: Option<String>,
     },
+    /// Automatically convert a pointer return value into the value it points to.
+    Dereference {
+        /// Whether to use `Option` and interpret `null` as `none`.
+        #[serde(default)]
+        nullable: bool,
+        /// Optional conversion for the pointed value, using the same conversion choices as return values.
+        element_conversion: Option<Box<ReturnValueSpecialConversion>>,
+        /// Whether to free the pointer after converting it.
+        free: bool,
+        /// Function that should be used to free the pointer.
+        /// When left empty, it defaults to `free` from the C standard library.
+        /// Only has an effect if `free` is true.
+        free_function: Option<String>,
+    },
     /// Automatically convert a pointer-to-pointer return value (which is interpreted as a null-terminated array)
     /// into a Lean Array.
     NullTerminatedArray {

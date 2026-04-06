@@ -328,6 +328,177 @@
       "return_value": null
     },
     {
+      "name": "out_string_length_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "String": {
+                  "nullable": false,
+                  "free": true,
+                  "free_function": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "Length": {
+          "of_param_index": 0
+        }
+      }
+    },
+    {
+      "name": "out_array_length_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "ArrayWithLength": {
+                  "nullable": false,
+                  "element_conversion": null,
+                  "free_array_after_conversion": true,
+                  "free_function": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "Length": {
+          "of_param_index": 0
+        }
+      }
+    },
+    {
+      "name": "out_array_and_string_length_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "ArrayWithLength": {
+                  "nullable": false,
+                  "element_conversion": null,
+                  "free_array_after_conversion": true,
+                  "free_function": null
+                }
+              }
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "String": {
+                  "nullable": false,
+                  "free": true,
+                  "free_function": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "Length": {
+          "of_param_index": 0
+        }
+      }
+    },
+    {
+      "name": "nullable_out_array_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        },
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "ArrayWithLength": {
+                  "nullable": true,
+                  "element_conversion": null,
+                  "free_array_after_conversion": true,
+                  "free_function": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "Length": {
+          "of_param_index": 1
+        }
+      }
+    },
+    {
+      "name": "empty_out_array_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "ArrayWithLength": {
+                  "nullable": false,
+                  "element_conversion": null,
+                  "free_array_after_conversion": true,
+                  "free_function": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "Length": {
+          "of_param_index": 0
+        }
+      }
+    },
+    {
+      "name": "array_return_with_out_length_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "Length": {
+                  "of_param_index": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "ArrayWithLength": {
+          "nullable": false,
+          "element_conversion": null,
+          "free_array_after_conversion": true,
+          "free_function": null
+        }
+      }
+    },
+    {
       "name": "string_buffer_without_length_test",
       "omit": false,
       "no_io": false,

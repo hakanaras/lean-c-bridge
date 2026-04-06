@@ -651,8 +651,13 @@ fn prepare_out_parameter(
         .ok_or_else(|| "out conversion requires a pointer parameter".to_string())?;
     ensure_out_stack_type_supported(&value_ty)?;
 
+    let lean_return_ty = match strategy {
+        Some(ReturnValueSpecialConversion::Length { .. }) => String::new(),
+        _ => lean_type_for_return(lean_ctx, c_ctx, registry, &value_ty, strategy)?,
+    };
+
     Ok(OutParam {
-        lean_return_ty: lean_type_for_return(lean_ctx, c_ctx, registry, &value_ty, strategy)?,
+        lean_return_ty,
         value_expr: name_gen.next(&format!("out_{}", parameter_name)),
         value_strategy: strategy.cloned(),
         value_ty,

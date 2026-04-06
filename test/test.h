@@ -639,6 +639,61 @@ static inline void out_only_test(int* left, int* right) {
     *right = 9;
 }
 
+static inline size_t out_string_length_test(char** message) {
+    *message = malloc(14);
+    strcpy(*message, "Hello, World!");
+    return 13;
+}
+
+static inline size_t out_array_length_test(int** values) {
+    int* arr = malloc(4 * sizeof(int));
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 3;
+    arr[3] = 4;
+    *values = arr;
+    return 4;
+}
+
+static inline size_t out_array_and_string_length_test(int** values, char** message) {
+    int* arr = malloc(3 * sizeof(int));
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 30;
+    *values = arr;
+    *message = malloc(6);
+    strcpy(*message, "Lean!");
+    return 3;
+}
+
+static inline size_t nullable_out_array_test(int selector, int** values) {
+    if (selector < 0) {
+        *values = NULL;
+        return 0;
+    }
+
+    size_t length = (size_t)selector;
+    int* arr = malloc((length == 0 ? 1 : length) * sizeof(int));
+    for (size_t i = 0; i < length; i++) {
+        arr[i] = (int)(i + 1);
+    }
+    *values = arr;
+    return length;
+}
+
+static inline size_t empty_out_array_test(int** values) {
+    int* arr = malloc(sizeof(int));
+    *values = arr;
+    return 0;
+}
+
+static inline int* array_return_with_out_length_test(size_t* length) {
+    *length = 0;
+    int* arr = malloc(sizeof(int));
+    arr[0] = 99;
+    return arr;
+}
+
 static inline void string_buffer_without_length_test(char* buffer) {
     strcpy(buffer, "Hello, World! Hello, World!");
 }

@@ -212,6 +212,18 @@ def test_out_params : IO Unit := do
   let (i1, i2) <- out_only_test
   assert! i1 == 7
   assert! i2 == 9
+  let s <- out_string_length_test
+  assert! s == "Hello, World!"
+  let values <- out_array_length_test
+  assert! values == #[1, 2, 3, 4]
+  let (values, message) <- out_array_and_string_length_test
+  assert! values == #[10, 20, 30]
+  assert! message == "Lean!"
+  assert! (<- nullable_out_array_test (-1)) == .none
+  assert! (<- nullable_out_array_test 0) == .some #[]
+  assert! (<- nullable_out_array_test 3) == .some #[1, 2, 3]
+  assert! (<- empty_out_array_test) == #[]
+  assert! (<- array_return_with_out_length_test) == #[]
   assert! (<- string_buffer_without_length_test) == "Hello, World! Hello, World!"
   assert! (<- string_buffer_with_length_test) == "Hello, World!"
 

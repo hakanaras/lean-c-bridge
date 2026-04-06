@@ -6,7 +6,7 @@ default-run = "lean-c-bridge"
 
 [dependencies]
 chrono = "0.4.44"
-clang = "2.0.0"
+clang = { version = "2.0.0", features = ["clang_3_9"] }
 clap = "4.6.0"
 crossterm = "0.29.0"
 itertools = "0.14.0"

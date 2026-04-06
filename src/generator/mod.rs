@@ -7,7 +7,7 @@ use crate::{
 };
 use std::collections::HashMap;
 pub mod c_context;
-mod c_render;
+pub mod c_render;
 mod ident;
 pub mod lean_context;
 mod predicates;

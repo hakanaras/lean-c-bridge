@@ -2,6 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::clang::types::{CFunction, CType};
 use crate::generator::TypeRegistry;
+use crate::generator::c_render::render_c_type;
 use crate::options::interface_choices::*;
 
 pub enum View {
@@ -362,7 +363,7 @@ impl App {
         // Parameters
         for (i, param) in func.parameters.iter().enumerate() {
             let param_name = param.name.as_deref().unwrap_or("?");
-            let type_str = display_ctype(&param.ty);
+            let type_str = render_c_type(&param.ty);
 
             items.push(FormItem {
                 label: format!("Parameter {}: {} ({})", i, param_name, type_str),
@@ -567,7 +568,7 @@ impl App {
         }
 
         // Return type
-        let ret_type_str = display_ctype(&func.return_type);
+        let ret_type_str = render_c_type(&func.return_type);
         items.push(FormItem {
             label: format!("Return ({})", ret_type_str),
             kind: FormItemKind::Header,
@@ -1112,52 +1113,6 @@ impl FormItem {
 }
 
 // --- Helper functions ---
-
-pub fn display_ctype(ty: &CType) -> String {
-    match ty {
-        CType::Void => "void".to_string(),
-        CType::Bool => "bool".to_string(),
-        CType::Char => "char".to_string(),
-        CType::UChar => "unsigned char".to_string(),
-        CType::Short => "short".to_string(),
-        CType::UShort => "unsigned short".to_string(),
-        CType::Int => "int".to_string(),
-        CType::UInt => "unsigned int".to_string(),
-        CType::Long => "long".to_string(),
-        CType::ULong => "unsigned long".to_string(),
-        CType::LongLong => "long long".to_string(),
-        CType::ULongLong => "unsigned long long".to_string(),
-        CType::Float => "float".to_string(),
-        CType::Double => "double".to_string(),
-        CType::LongDouble => "long double".to_string(),
-        CType::SizeT => "size_t".to_string(),
-        CType::PtrdiffT => "ptrdiff_t".to_string(),
-        CType::Pointer { is_const, pointee } => {
-            if *is_const {
-                format!("const {}*", display_ctype(pointee))
-            } else {
-                format!("{}*", display_ctype(pointee))
-            }
-        }
-        CType::Array { element, size } => match size {
-            Some(s) => format!("{}[{}]", display_ctype(element), s),
-            None => format!("{}[]", display_ctype(element)),
-        },
-        CType::Struct(name) => format!("struct {}", name),
-        CType::Union(name) => format!("union {}", name),
-        CType::Enum(name) => format!("enum {}", name),
-        CType::Typedef(name) => name.clone(),
-        CType::FunctionPointer {
-            return_type,
-            parameters,
-        } => {
-            let params: Vec<String> = parameters.iter().map(display_ctype).collect();
-            format!("{}(*)({})", display_ctype(return_type), params.join(", "))
-        }
-        CType::IncompleteArray { element } => format!("{}[]", display_ctype(element)),
-        CType::Unknown(s) => s.clone(),
-    }
-}
 
 fn is_char_pointer(ty: &CType) -> bool {
     matches!(ty, CType::Pointer { pointee, .. } if matches!(**pointee, CType::Char))

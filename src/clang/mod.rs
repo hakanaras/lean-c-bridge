@@ -8,9 +8,11 @@ use crate::options::types::Options;
 pub fn parse_header(c_header_filepath: &str, options: &Options) -> Vec<CDeclaration> {
     let clang = Clang::new().expect("failed to initialize clang");
     let index = Index::new(&clang, false, true);
+    let mut clang_args = options.clang_args.clone();
+    clang_args.extend_from_slice(&["-x".to_string(), "c".to_string(), "-std=c11".to_string()]);
     let tu = index
         .parser(c_header_filepath)
-        .arguments(&options.clang_args)
+        .arguments(&clang_args)
         .parse()
         .expect("failed to parse translation unit");
     let entity = tu.get_entity();
@@ -181,16 +183,20 @@ fn convert_type(ty: &clang::Type) -> CType {
             CType::Typedef(name)
         }
         TypeKind::Record => {
-            let name = ty.get_display_name();
+            let mut name = ty.get_display_name();
+            remove_prefix(&mut name, "const ");
+            remove_prefix(&mut name, "union ");
+            remove_prefix(&mut name, "struct ");
             if name.starts_with("union ") {
-                CType::Union(name.trim_start_matches("union ").to_string())
+                CType::Union(name)
             } else {
-                CType::Struct(name.trim_start_matches("struct ").to_string())
+                CType::Struct(name)
             }
         }
         TypeKind::Enum => {
-            let name = ty.get_display_name();
-            CType::Enum(name.trim_start_matches("enum ").to_string())
+            let mut name = ty.get_display_name();
+            remove_prefix(&mut name, "enum ");
+            CType::Enum(name)
         }
         TypeKind::FunctionPrototype => {
             let return_type = ty
@@ -208,7 +214,13 @@ fn convert_type(ty: &clang::Type) -> CType {
                 parameters,
             }
         }
-        TypeKind::Elaborated => convert_type(&ty.get_canonical_type()),
+        TypeKind::Elaborated => convert_type(&ty.get_elaborated_type().unwrap()),
         _ => CType::Unknown(ty.get_display_name()),
+    }
+}
+
+fn remove_prefix(s: &mut String, prefix: &str) {
+    if s.starts_with(prefix) {
+        s.drain(..prefix.len());
     }
 }

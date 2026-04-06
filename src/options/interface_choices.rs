@@ -34,7 +34,7 @@ pub struct ParameterChoices {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParameterSpecialConversion {
-    /// Pass a pointer to the passed value to the original function instead of passing the value directly.
+    /// Instead of passing the argument directly to the original C function, a pointer to it will be passed.
     Reference {
         /// Whether to use `Option` and pass `null` when `none`.
         #[serde(default)]
@@ -68,7 +68,7 @@ pub enum ParameterSpecialConversion {
         /// Optional conversion for the pointed value, using the same conversion choices as return values.
         element_conversion: Option<Box<ReturnValueSpecialConversion>>,
     },
-    /// Pass the length of another parameter (which must have String, StringBuffer or Array conversion)
+    /// Automatically pass the length of another parameter (which must have `String`, `StringBuffer` or `Array` conversion)
     Length {
         /// Which parameter is this the length of? (0-based index)
         of_param_index: usize,
@@ -112,15 +112,36 @@ pub enum ReturnValueSpecialConversion {
         /// Only has an effect if `free` is true.
         free_function: Option<String>,
     },
+    /// Denotes the length of another parameter or return value with `ArrayWithLength` or `String` conversion.
+    Length {
+        /// Which parameter is this the length of? (0-based index).
+        /// `None` means that it applies to the return value.
+        of_param_index: Option<usize>,
+    },
+    /// Automatically convert a pointer return value (which is interpreted as an array) into a
+    /// Lean `Array` of the pointed value.
+    ArrayWithLength {
+        /// Whether to use `Option` and interpret `null` as `none`.
+        #[serde(default)]
+        nullable: bool,
+        /// Optional conversion for the individual elements of the array.
+        element_conversion: Option<Box<ReturnValueSpecialConversion>>,
+        /// Whether to free the array after converting it.
+        free_array_after_conversion: bool,
+        /// Function that should be used to free the array.
+        /// When left empty, it defaults to `free` from the C standard library.
+        /// Only has an effect if `free_array_after_conversion` is true.
+        free_function: Option<String>,
+    },
     /// Automatically convert a pointer-to-pointer return value (which is interpreted as a null-terminated array)
     /// into a Lean Array.
     NullTerminatedArray {
-        /// Whether to use `Option (Array ...)` instead of `Array ...` and interpret `null` as `none`.
+        /// Whether to use `Option` and interpret `null` as `none`.
         #[serde(default)]
         nullable: bool,
-        /// Optional conversion for the pointed value, using the same conversion choices as return values.
+        /// Optional conversion for the individual elements of the array.
         element_conversion: Option<Box<ReturnValueSpecialConversion>>,
-        /// Whether to free the top-level array after converting it.
+        /// Whether to free the array after converting it.
         #[serde(default)]
         free_array_after_conversion: bool,
         /// Function that should be used to free the array.

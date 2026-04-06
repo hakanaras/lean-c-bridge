@@ -257,31 +257,108 @@ pub fn generate_function(
     }
 
     let return_strategy = choices.and_then(|c| c.return_value.as_ref());
-    let base_lean_return_ty = match lean_type_for_return(
-        lean_ctx,
-        c_ctx,
-        registry,
-        &function.return_type,
-        return_strategy,
-    ) {
-        Ok(lean_ty) => lean_ty,
-        Err(reason) => {
-            emit_omitted_function(lean_ctx, c_ctx, function, &reason);
+    let return_value_is_void = matches!(
+        registry.resolve_alias_type(&function.return_type),
+        CType::Void
+    );
+    let base_return_visible =
+        !return_value_is_void && !return_strategy_hidden_from_signature(return_strategy);
+
+    let mut return_length_exprs: HashMap<Option<usize>, String> = HashMap::new();
+    if !return_value_is_void {
+        if let Some(target) = return_length_target(return_strategy) {
+            if return_length_exprs
+                .insert(target, "c_result".to_string())
+                .is_some()
+            {
+                emit_omitted_function(
+                    lean_ctx,
+                    c_ctx,
+                    function,
+                    &format!(
+                        "multiple length return conversions target {}",
+                        output_target_description(target)
+                    ),
+                );
+                return;
+            }
+        }
+    }
+
+    for parameter in &params {
+        if let Some(out_param) = parameter.out_param.as_ref() {
+            if let Some(target) = return_length_target(out_param.value_strategy.as_ref()) {
+                if return_length_exprs
+                    .insert(target, out_param.value_expr.clone())
+                    .is_some()
+                {
+                    emit_omitted_function(
+                        lean_ctx,
+                        c_ctx,
+                        function,
+                        &format!(
+                            "multiple length return conversions target {}",
+                            output_target_description(target)
+                        ),
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    for target in return_length_exprs.keys().copied().collect::<Vec<_>>() {
+        let consumer_strategy = match target {
+            None => return_strategy,
+            Some(index) => params
+                .get(index)
+                .and_then(|parameter| parameter.out_param.as_ref())
+                .and_then(|out_param| out_param.value_strategy.as_ref()),
+        };
+
+        if !return_strategy_consumes_length(consumer_strategy) {
+            emit_omitted_function(
+                lean_ctx,
+                c_ctx,
+                function,
+                &format!(
+                    "length return conversion targets {}, which does not use String or ArrayWithLength conversion",
+                    output_target_description(target)
+                ),
+            );
             return;
         }
+    }
+
+    let base_lean_return_ty = if base_return_visible {
+        match lean_type_for_return(
+            lean_ctx,
+            c_ctx,
+            registry,
+            &function.return_type,
+            return_strategy,
+        ) {
+            Ok(lean_ty) => lean_ty,
+            Err(reason) => {
+                emit_omitted_function(lean_ctx, c_ctx, function, &reason);
+                return;
+            }
+        }
+    } else {
+        "Unit".to_string()
     };
     let out_return_types = params
         .iter()
         .filter_map(|parameter| parameter.out_param.as_ref())
+        .filter(|out_param| {
+            !return_strategy_hidden_from_signature(out_param.value_strategy.as_ref())
+        })
         .map(|out_param| out_param.lean_return_ty.clone())
         .collect::<Vec<_>>();
     let has_out_params = !out_return_types.is_empty();
     let lean_return_ty = combine_lean_return_type(
         &base_lean_return_ty,
-        matches!(
-            registry.resolve_alias_type(&function.return_type),
-            CType::Void
-        ),
+        !base_return_visible,
         &out_return_types,
     );
 
@@ -366,10 +443,7 @@ pub fn generate_function(
     let return_expr = if has_out_params {
         let mut return_components = Vec::new();
 
-        if !matches!(
-            registry.resolve_alias_type(&function.return_type),
-            CType::Void
-        ) {
+        if base_return_visible {
             let return_value = match prepare_return_value(
                 lean_ctx,
                 c_ctx,
@@ -378,6 +452,7 @@ pub fn generate_function(
                 Some("c_result"),
                 &function.return_type,
                 return_strategy,
+                return_length_exprs.get(&None).map(String::as_str),
                 true,
             ) {
                 Ok(value) => value,
@@ -389,10 +464,16 @@ pub fn generate_function(
             return_components.push(return_value);
         }
 
-        for out_param in params
-            .iter()
-            .filter_map(|parameter| parameter.out_param.as_ref())
-        {
+        for (index, out_param) in params.iter().enumerate().filter_map(|(index, parameter)| {
+            parameter
+                .out_param
+                .as_ref()
+                .map(|out_param| (index, out_param))
+        }) {
+            if return_strategy_hidden_from_signature(out_param.value_strategy.as_ref()) {
+                continue;
+            }
+
             let return_value = match prepare_return_value(
                 lean_ctx,
                 c_ctx,
@@ -401,6 +482,7 @@ pub fn generate_function(
                 Some(&out_param.value_expr),
                 &out_param.value_ty,
                 out_param.value_strategy.as_ref(),
+                return_length_exprs.get(&Some(index)).map(String::as_str),
                 true,
             ) {
                 Ok(value) => value,
@@ -423,33 +505,31 @@ pub fn generate_function(
 
         "returnValue".to_string()
     } else {
-        let return_value = match prepare_return_value(
-            lean_ctx,
-            c_ctx,
-            registry,
-            &mut name_gen,
-            if matches!(
-                registry.resolve_alias_type(&function.return_type),
-                CType::Void
+        if base_return_visible {
+            let return_value = match prepare_return_value(
+                lean_ctx,
+                c_ctx,
+                registry,
+                &mut name_gen,
+                Some("c_result"),
+                &function.return_type,
+                return_strategy,
+                return_length_exprs.get(&None).map(String::as_str),
+                use_io || !is_lean_float_return(&function.return_type, return_strategy, registry),
             ) {
-                None
-            } else {
-                Some("c_result")
-            },
-            &function.return_type,
-            return_strategy,
-            use_io || !is_lean_float_return(&function.return_type, return_strategy, registry),
-        ) {
-            Ok(value) => value,
-            Err(reason) => {
-                emit_omitted_function(lean_ctx, c_ctx, function, &reason);
-                return;
-            }
-        };
+                Ok(value) => value,
+                Err(reason) => {
+                    emit_omitted_function(lean_ctx, c_ctx, function, &reason);
+                    return;
+                }
+            };
 
-        body_lines.extend(return_value.pre.iter().cloned());
-        body_lines.extend(return_value.post.iter().cloned());
-        return_value.expr
+            body_lines.extend(return_value.pre.iter().cloned());
+            body_lines.extend(return_value.post.iter().cloned());
+            return_value.expr
+        } else {
+            "lean_box(0)".to_string()
+        }
     };
 
     if use_io {
@@ -520,6 +600,32 @@ fn parameter_strategy<'a>(
     choices
         .and_then(|choices| choices.parameters.get(index))
         .and_then(|parameter| parameter.conversion_strategy.as_ref())
+}
+
+fn return_length_target(strategy: Option<&ReturnValueSpecialConversion>) -> Option<Option<usize>> {
+    match strategy {
+        Some(ReturnValueSpecialConversion::Length { of_param_index }) => Some(*of_param_index),
+        _ => None,
+    }
+}
+
+fn return_strategy_consumes_length(strategy: Option<&ReturnValueSpecialConversion>) -> bool {
+    matches!(
+        strategy,
+        Some(ReturnValueSpecialConversion::String { .. })
+            | Some(ReturnValueSpecialConversion::ArrayWithLength { .. })
+    )
+}
+
+fn return_strategy_hidden_from_signature(strategy: Option<&ReturnValueSpecialConversion>) -> bool {
+    matches!(strategy, Some(ReturnValueSpecialConversion::Length { .. }))
+}
+
+fn output_target_description(target: Option<usize>) -> String {
+    match target {
+        Some(index) => format!("parameter {}", index),
+        None => "the return value".to_string(),
+    }
 }
 
 fn normalize_top_level_strategy(
@@ -631,7 +737,10 @@ fn lean_type_for_parameter(
             let nested = normalize_nested_strategy(element_conversion.as_deref());
             if matches!(nested, Some(ParameterSpecialConversion::Reference { .. }))
                 || matches!(nested, Some(ParameterSpecialConversion::Array { .. }))
-                || matches!(nested, Some(ParameterSpecialConversion::StringBuffer { .. }))
+                || matches!(
+                    nested,
+                    Some(ParameterSpecialConversion::StringBuffer { .. })
+                )
                 || matches!(nested, Some(ParameterSpecialConversion::Out { .. }))
                 || matches!(nested, Some(ParameterSpecialConversion::Length { .. }))
                 || matches!(nested, Some(ParameterSpecialConversion::StaticExpr { .. }))
@@ -674,6 +783,13 @@ fn lean_type_for_return(
     ty: &CType,
     strategy: Option<&ReturnValueSpecialConversion>,
 ) -> Result<String, String> {
+    if matches!(strategy, Some(ReturnValueSpecialConversion::Length { .. })) {
+        return Err(
+            "length return conversion denotes metadata and does not produce a Lean value"
+                .to_string(),
+        );
+    }
+
     if let Some(ReturnValueSpecialConversion::String { nullable, .. }) = strategy {
         if registry.is_char_pointer_like(ty) {
             let base_ty = "String".to_string();
@@ -692,9 +808,9 @@ fn lean_type_for_return(
         ..
     }) = strategy
     {
-        let element_ty = registry
-            .pointer_element_type(ty)
-            .ok_or_else(|| "dereference return conversion requires a pointer return type".to_string())?;
+        let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
+            "dereference return conversion requires a pointer return type".to_string()
+        })?;
 
         let base_ty = lean_type_for_return(
             lean_ctx,
@@ -711,9 +827,38 @@ fn lean_type_for_return(
         });
     }
 
+    if let Some(ReturnValueSpecialConversion::ArrayWithLength {
+        nullable,
+        element_conversion,
+        ..
+    }) = strategy
+    {
+        let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
+            "array-with-length return conversion requires a pointer return type".to_string()
+        })?;
+
+        let base_ty = format!(
+            "Array {}",
+            parenthesize_lean_type(&lean_type_for_return(
+                lean_ctx,
+                c_ctx,
+                registry,
+                &element_ty,
+                element_conversion.as_deref(),
+            )?)
+        );
+
+        return Ok(if *nullable {
+            lean_option_type(&base_ty)
+        } else {
+            base_ty
+        });
+    }
+
     if let Some(ReturnValueSpecialConversion::NullTerminatedArray {
         nullable,
-        element_conversion, ..
+        element_conversion,
+        ..
     }) = strategy
     {
         let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
@@ -1252,10 +1397,7 @@ fn prepare_array_parameter(
             index_var, index_var, len_var, index_var
         ));
     } else {
-        pre.push(format!(
-            "{} = lean_array_size({});",
-            len_var, lean_expr
-        ));
+        pre.push(format!("{} = lean_array_size({});", len_var, lean_expr));
         if is_pointer_element {
             pre.push(format!(
                 "{} = LEAN_FFI_MALLOC_ARRAY({}, {} + 1);",
@@ -1388,11 +1530,7 @@ fn prepare_reference_parameter(
         )?;
 
         let mut pre = storage.declarations;
-        pre.push(format!(
-            "{} {} = NULL;",
-            render_c_type(ty),
-            pointer_var
-        ));
+        pre.push(format!("{} {} = NULL;", render_c_type(ty), pointer_var));
         pre.push(format!("if (lean_ffi_option_is_some({})) {{", lean_expr));
         pre.extend(indent_lines(&storage.init, "    "));
         pre.push(format!("    {} = &{};", pointer_var, value_var));
@@ -1516,9 +1654,7 @@ fn prepare_reference_storage(
         }
         Some(ParameterSpecialConversion::String { nullable }) => {
             if !registry.is_char_pointer_like(ty) {
-                return Err(
-                    "string conversion requires a char* pointed value".to_string(),
-                );
+                return Err("string conversion requires a char* pointed value".to_string());
             }
 
             let bytes_var = name_gen.next("reference_string_len");
@@ -1574,22 +1710,25 @@ fn prepare_reference_storage(
                 init: prepared
                     .pre
                     .into_iter()
-                    .chain(std::iter::once(format!("{} = {};", storage_var, prepared.expr)))
+                    .chain(std::iter::once(format!(
+                        "{} = {};",
+                        storage_var, prepared.expr
+                    )))
                     .collect(),
                 cleanup: prepared.post,
                 length_expr: prepared.length_expr,
             })
         }
-        Some(ParameterSpecialConversion::StringBuffer { .. }) => Err(
-            "reference pointed-value conversions do not support string buffers".to_string(),
-        ),
-        Some(ParameterSpecialConversion::Out { .. }) => Err(
-            "reference pointed-value conversions do not support out conversions".to_string(),
-        ),
+        Some(ParameterSpecialConversion::StringBuffer { .. }) => {
+            Err("reference pointed-value conversions do not support string buffers".to_string())
+        }
+        Some(ParameterSpecialConversion::Out { .. }) => {
+            Err("reference pointed-value conversions do not support out conversions".to_string())
+        }
         Some(ParameterSpecialConversion::Length { .. })
-        | Some(ParameterSpecialConversion::StaticExpr { .. }) => Err(
-            "reference pointed-value conversions do not support omitted values".to_string(),
-        ),
+        | Some(ParameterSpecialConversion::StaticExpr { .. }) => {
+            Err("reference pointed-value conversions do not support omitted values".to_string())
+        }
         None => prepare_reference_storage_default(
             lean_ctx,
             c_ctx,
@@ -1931,6 +2070,7 @@ fn prepare_return_value(
     c_expr: Option<&str>,
     ty: &CType,
     strategy: Option<&ReturnValueSpecialConversion>,
+    length_expr: Option<&str>,
     box_float_return: bool,
 ) -> Result<PreparedValue, String> {
     if c_expr.is_none() {
@@ -1953,11 +2093,21 @@ fn prepare_return_value(
         }
         let result_var = name_gen.next("lean_result");
         let source_expr = c_expr.unwrap();
+        let make_string_expr = match length_expr {
+            Some(length_expr) => format!(
+                "lean_mk_string_from_bytes({0} == NULL ? \"\" : {0}, {0} == NULL ? 0 : (size_t)({1}))",
+                source_expr, length_expr
+            ),
+            None => format!(
+                "lean_mk_string({} == NULL ? \"\" : {})",
+                source_expr, source_expr
+            ),
+        };
         let pre = if *nullable {
             vec![
                 format!("lean_obj_res {};", result_var),
                 format!("if ({} != NULL) {{", source_expr),
-                format!("    lean_obj_res ffi_string = lean_mk_string({});", source_expr),
+                format!("    lean_obj_res ffi_string = {};", make_string_expr),
                 format!("    {} = lean_ffi_option_some(ffi_string);", result_var),
                 "} else {".to_string(),
                 format!("    {} = lean_ffi_option_none();", result_var),
@@ -1965,8 +2115,8 @@ fn prepare_return_value(
             ]
         } else {
             vec![format!(
-                "lean_obj_res {} = lean_mk_string({} == NULL ? \"\" : {});",
-                result_var, source_expr, source_expr
+                "lean_obj_res {} = {};",
+                result_var, make_string_expr
             )]
         };
         let mut post = Vec::new();
@@ -1992,9 +2142,9 @@ fn prepare_return_value(
         free_function,
     }) = strategy
     {
-        let element_ty = registry
-            .pointer_element_type(ty)
-            .ok_or_else(|| "dereference return conversion requires a pointer return type".to_string())?;
+        let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
+            "dereference return conversion requires a pointer return type".to_string()
+        })?;
 
         let source_expr = c_expr.unwrap();
         let element_var = name_gen.next("deref_value");
@@ -2007,6 +2157,7 @@ fn prepare_return_value(
             Some(&element_var),
             &element_ty,
             element_conversion.as_deref(),
+            None,
             true,
         )?;
 
@@ -2017,9 +2168,15 @@ fn prepare_return_value(
         if *nullable {
             pre.push(format!("lean_obj_res {};", result_var));
             pre.push(format!("if ({} != NULL) {{", source_expr));
-            pre.push(format!("    {} {} = *{};", element_c_ty, element_var, source_expr));
+            pre.push(format!(
+                "    {} {} = *{};",
+                element_c_ty, element_var, source_expr
+            ));
             pre.extend(nested.pre.into_iter().map(|line| format!("    {}", line)));
-            pre.push(format!("    lean_obj_res {} = {};", nested_value_var, nested.expr));
+            pre.push(format!(
+                "    lean_obj_res {} = {};",
+                nested_value_var, nested.expr
+            ));
             pre.extend(nested.post.into_iter().map(|line| format!("    {}", line)));
             pre.push(format!(
                 "    {} = lean_ffi_option_some({});",
@@ -2036,7 +2193,10 @@ fn prepare_return_value(
             pre.push(format!("    {} = lean_ffi_option_none();", result_var));
             pre.push("}".to_string());
         } else {
-            pre.push(format!("{} {} = *{};", element_c_ty, element_var, source_expr));
+            pre.push(format!(
+                "{} {} = *{};",
+                element_c_ty, element_var, source_expr
+            ));
             pre.extend(nested.pre);
             pre.push(format!("lean_obj_res {} = {};", result_var, nested.expr));
 
@@ -2061,6 +2221,130 @@ fn prepare_return_value(
             pre,
             expr: result_var,
             post: Vec::new(),
+            length_expr: None,
+        });
+    }
+
+    if let Some(ReturnValueSpecialConversion::ArrayWithLength {
+        nullable,
+        element_conversion,
+        free_array_after_conversion,
+        free_function,
+    }) = strategy
+    {
+        let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
+            "array-with-length return conversion requires a pointer return type".to_string()
+        })?;
+        let length_expr = length_expr.ok_or_else(|| {
+            "array-with-length return conversion requires a matching length return conversion"
+                .to_string()
+        })?;
+
+        let result_var = name_gen.next("lean_array");
+        let len_var = name_gen.next("array_len");
+        let index_var = name_gen.next("i");
+        let element_var = name_gen.next("array_elem");
+        let element_c_ty = render_c_type(&element_ty);
+        let source_expr = c_expr.unwrap();
+        let array_var = if *nullable {
+            name_gen.next("lean_array_value")
+        } else {
+            result_var.clone()
+        };
+        let mut pre = Vec::new();
+
+        if *nullable {
+            pre.push(format!("size_t {} = 0;", len_var));
+            pre.push(format!("lean_obj_res {};", result_var));
+            pre.push(format!("if ({} != NULL) {{", source_expr));
+            pre.push(format!("    {} = (size_t)({});", len_var, length_expr));
+            pre.push(format!(
+                "    lean_obj_res {} = lean_ffi_mk_array_with_capacity({});",
+                array_var, len_var
+            ));
+            pre.push(format!(
+                "    for (size_t {} = 0; {} < {}; ++{}) {{",
+                index_var, index_var, len_var, index_var
+            ));
+            pre.push(format!(
+                "        {} {} = {}[{}];",
+                element_c_ty, element_var, source_expr, index_var
+            ));
+        } else {
+            pre.push(format!(
+                "size_t {} = {} == NULL ? 0 : (size_t)({});",
+                len_var, source_expr, length_expr
+            ));
+            pre.push(format!(
+                "lean_obj_res {} = lean_ffi_mk_array_with_capacity({});",
+                result_var, len_var
+            ));
+            pre.push(format!(
+                "for (size_t {} = 0; {} < {}; ++{}) {{",
+                index_var, index_var, len_var, index_var
+            ));
+            pre.push(format!(
+                "    {} {} = {}[{}];",
+                element_c_ty, element_var, source_expr, index_var
+            ));
+        }
+
+        let prepared = prepare_return_value(
+            lean_ctx,
+            c_ctx,
+            registry,
+            name_gen,
+            Some(&element_var),
+            &element_ty,
+            element_conversion.as_deref(),
+            None,
+            true,
+        )?;
+
+        let indent = if *nullable { "        " } else { "    " };
+        pre.extend(
+            prepared
+                .pre
+                .into_iter()
+                .map(|line| format!("{}{}", indent, line)),
+        );
+        pre.push(format!(
+            "{}{} = lean_array_push({}, {});",
+            indent, array_var, array_var, prepared.expr
+        ));
+        pre.extend(
+            prepared
+                .post
+                .into_iter()
+                .map(|line| format!("{}{}", indent, line)),
+        );
+
+        if *nullable {
+            pre.push("    }".to_string());
+            pre.push(format!(
+                "    {} = lean_ffi_option_some({});",
+                result_var, array_var
+            ));
+            pre.push("} else {".to_string());
+            pre.push(format!("    {} = lean_ffi_option_none();", result_var));
+            pre.push("}".to_string());
+        } else {
+            pre.push("}".to_string());
+        }
+
+        let mut post = Vec::new();
+        if *free_array_after_conversion {
+            post.push(format!(
+                "{}((void *){});",
+                deallocator_name(free_function.as_deref()),
+                source_expr
+            ));
+        }
+
+        return Ok(PreparedValue {
+            pre,
+            expr: result_var,
+            post,
             length_expr: None,
         });
     }
@@ -2146,6 +2430,7 @@ fn prepare_return_value(
             Some(&element_var),
             &element_ty,
             element_conversion.as_deref(),
+            None,
             true,
         )?;
 
@@ -2168,7 +2453,10 @@ fn prepare_return_value(
         );
         if *nullable {
             pre.push("    }".to_string());
-            pre.push(format!("    {} = lean_ffi_option_some({});", result_var, array_var));
+            pre.push(format!(
+                "    {} = lean_ffi_option_some({});",
+                result_var, array_var
+            ));
             pre.push("} else {".to_string());
             pre.push(format!("    {} = lean_ffi_option_none();", result_var));
             pre.push("}".to_string());

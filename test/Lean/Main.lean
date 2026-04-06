@@ -5,6 +5,12 @@ open Test
 -- Test that `omitted` was omitted:
 def Test.omitted : Unit := ()
 
+def mkByteArray (xs : List UInt8) : ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  for x in xs do
+    out := out.push x
+  return out
+
 def test_primitive_returns : IO Unit := do
   assert! (<- bool_return_false) == 0
   assert! (<- bool_return_true) == 1
@@ -126,16 +132,26 @@ def test_enums : IO Unit := do
   test_enum_take_invalid (test_enum.other 999)
 
 def test_arrays : IO Unit := do
+  let bytes1 := mkByteArray [0, 1, 2, 255]
+  let bytes2 := mkByteArray [10, 20, 30]
   assert! (<- static_array_return).arr == #[1, 2, 3, 4]
   dynamic_array_take (.some #[1, 2, 3, 4]) 4
   dynamic_array_take (.some #[]) 0
   dynamic_array_take (.none) (-1)
   dynamic_string_array_take #["Hello", "World"]
+  byte_array_take bytes1
+  byte_array_take_nullable (.some ByteArray.empty) 0
+  byte_array_take_nullable (.some bytes2) 1
+  byte_array_take_nullable .none (-1)
   static_array_take #[1, 2, 3, 4]
   assert! (<- dynamic_string_array_return) == #["Hello", "World"]
   assert! (<- dynamic_string_array_return_nullable (-1)) == .none
   assert! (<- dynamic_string_array_return_nullable 0) == .some #[]
   assert! (<- dynamic_string_array_return_nullable 4) == .some #["Foo", "Foo", "Foo", "Foo"]
+  assert! (<- byte_array_return_with_out_length) == bytes1
+  assert! (<- byte_array_return_with_out_length_nullable (-1)) == .none
+  assert! (<- byte_array_return_with_out_length_nullable 0) == .some ByteArray.empty
+  assert! (<- byte_array_return_with_out_length_nullable 1) == .some bytes2
   let (a2, str) <- array_and_string_return
   assert! a2 == #["Hello", "World"]
   assert! str == ""

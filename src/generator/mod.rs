@@ -735,11 +735,34 @@ fn lean_type_for_parameter(
         Some(ParameterSpecialConversion::Array {
             nullable,
             element_conversion,
+            byte_array,
         }) => {
             let element_ty = registry
                 .pointer_element_type(ty)
                 .ok_or_else(|| "array conversion requires a pointer parameter".to_string())?;
             let nested = normalize_nested_strategy(element_conversion.as_deref());
+
+            if *byte_array {
+                if nested.is_some() {
+                    return Err(
+                        "byte-array parameter conversion does not support element conversions"
+                            .to_string(),
+                    );
+                }
+                ensure_byte_array_element_type(
+                    registry,
+                    &element_ty,
+                    "byte-array parameter conversion",
+                )?;
+
+                let base_ty = "ByteArray".to_string();
+                return Ok(if *nullable {
+                    lean_option_type(&base_ty)
+                } else {
+                    base_ty
+                });
+            }
+
             if matches!(nested, Some(ParameterSpecialConversion::Reference { .. }))
                 || matches!(nested, Some(ParameterSpecialConversion::Array { .. }))
                 || matches!(
@@ -835,12 +858,34 @@ fn lean_type_for_return(
     if let Some(ReturnValueSpecialConversion::ArrayWithLength {
         nullable,
         element_conversion,
+        byte_array,
         ..
     }) = strategy
     {
         let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
             "array-with-length return conversion requires a pointer return type".to_string()
         })?;
+
+        if *byte_array {
+            if element_conversion.is_some() {
+                return Err(
+                    "byte-array return conversion does not support element conversions"
+                        .to_string(),
+                );
+            }
+            ensure_byte_array_element_type(
+                registry,
+                &element_ty,
+                "byte-array return conversion",
+            )?;
+
+            let base_ty = "ByteArray".to_string();
+            return Ok(if *nullable {
+                lean_option_type(&base_ty)
+            } else {
+                base_ty
+            });
+        }
 
         let base_ty = format!(
             "Array {}",
@@ -1210,6 +1255,7 @@ fn prepare_parameter_value(
         Some(ParameterSpecialConversion::Array {
             nullable,
             element_conversion,
+            byte_array,
         }) => prepare_array_parameter(
             lean_ctx,
             c_ctx,
@@ -1219,6 +1265,7 @@ fn prepare_parameter_value(
             ty,
             *nullable,
             normalize_nested_strategy(element_conversion.as_deref()),
+            *byte_array,
         ),
         Some(ParameterSpecialConversion::Length { .. })
         | Some(ParameterSpecialConversion::StaticExpr { .. }) => {
@@ -1335,10 +1382,56 @@ fn prepare_array_parameter(
     ty: &CType,
     nullable: bool,
     element_strategy: Option<&ParameterSpecialConversion>,
+    byte_array: bool,
 ) -> Result<PreparedValue, String> {
     let element_ty = registry
         .pointer_element_type(ty)
         .ok_or_else(|| "array conversion requires a pointer parameter".to_string())?;
+
+    if byte_array {
+        if element_strategy.is_some() {
+            return Err(
+                "byte-array parameter conversion does not support element conversions"
+                    .to_string(),
+            );
+        }
+        ensure_byte_array_element_type(registry, &element_ty, "byte-array parameter conversion")?;
+
+        let len_var = name_gen.next("array_len");
+        let data_var = name_gen.next("array_data");
+        let element_c_ty = render_c_type(&element_ty);
+        let mut pre = vec![format!("size_t {} = 0;", len_var)];
+
+        if nullable {
+            pre.push(format!("{} * {} = NULL;", element_c_ty, data_var));
+            pre.push(format!("if (lean_ffi_option_is_some({})) {{", lean_expr));
+            pre.push(format!(
+                "    {} = {}lean_ffi_byte_array_to_c(lean_ffi_option_get({}), &{});",
+                data_var,
+                byte_array_pointer_cast(&element_ty),
+                lean_expr,
+                len_var
+            ));
+            pre.push("}".to_string());
+        } else {
+            pre.push(format!(
+                "{} * {} = {}lean_ffi_byte_array_to_c({}, &{});",
+                element_c_ty,
+                data_var,
+                byte_array_pointer_cast(&element_ty),
+                lean_expr,
+                len_var
+            ));
+        }
+
+        return Ok(PreparedValue {
+            pre,
+            expr: data_var.clone(),
+            post: vec![format!("free({});", data_var)],
+            length_expr: Some(len_var),
+        });
+    }
+
     if matches!(
         element_strategy,
         Some(ParameterSpecialConversion::Reference { .. })
@@ -1695,6 +1788,7 @@ fn prepare_reference_storage(
         Some(ParameterSpecialConversion::Array {
             nullable,
             element_conversion,
+            byte_array,
         }) => {
             let prepared = prepare_array_parameter(
                 lean_ctx,
@@ -1705,6 +1799,7 @@ fn prepare_reference_storage(
                 ty,
                 *nullable,
                 normalize_nested_strategy(element_conversion.as_deref()),
+                *byte_array,
             )?;
 
             Ok(PreparedStorage {
@@ -2235,6 +2330,7 @@ fn prepare_return_value(
         element_conversion,
         free_array_after_conversion,
         free_function,
+        byte_array,
     }) = strategy
     {
         let element_ty = registry.pointer_element_type(ty).ok_or_else(|| {
@@ -2244,6 +2340,61 @@ fn prepare_return_value(
             "array-with-length return conversion requires a matching length return conversion"
                 .to_string()
         })?;
+
+        if *byte_array {
+            if element_conversion.is_some() {
+                return Err(
+                    "byte-array return conversion does not support element conversions"
+                        .to_string(),
+                );
+            }
+            ensure_byte_array_element_type(registry, &element_ty, "byte-array return conversion")?;
+
+            let result_var = name_gen.next("lean_array");
+            let len_var = name_gen.next("array_len");
+            let source_expr = c_expr.unwrap();
+            let mut pre = Vec::new();
+
+            if *nullable {
+                pre.push(format!("size_t {} = 0;", len_var));
+                pre.push(format!("lean_obj_res {};", result_var));
+                pre.push(format!("if ({} != NULL) {{", source_expr));
+                pre.push(format!("    {} = (size_t)({});", len_var, length_expr));
+                pre.push(format!(
+                    "    lean_obj_res ffi_bytes = lean_ffi_mk_byte_array((const uint8_t *){}, {});",
+                    source_expr, len_var
+                ));
+                pre.push(format!("    {} = lean_ffi_option_some(ffi_bytes);", result_var));
+                pre.push("} else {".to_string());
+                pre.push(format!("    {} = lean_ffi_option_none();", result_var));
+                pre.push("}".to_string());
+            } else {
+                pre.push(format!(
+                    "size_t {} = {} == NULL ? 0 : (size_t)({});",
+                    len_var, source_expr, length_expr
+                ));
+                pre.push(format!(
+                    "lean_obj_res {} = lean_ffi_mk_byte_array((const uint8_t *){}, {});",
+                    result_var, source_expr, len_var
+                ));
+            }
+
+            let mut post = Vec::new();
+            if *free_array_after_conversion {
+                post.push(format!(
+                    "{}((void *){});",
+                    deallocator_name(free_function.as_deref()),
+                    source_expr
+                ));
+            }
+
+            return Ok(PreparedValue {
+                pre,
+                expr: result_var,
+                post,
+                length_expr: None,
+            });
+        }
 
         let result_var = name_gen.next("lean_array");
         let len_var = name_gen.next("array_len");
@@ -2712,6 +2863,25 @@ fn normalize_nested_strategy(
     strategy: Option<&ParameterSpecialConversion>,
 ) -> Option<&ParameterSpecialConversion> {
     strategy
+}
+
+fn ensure_byte_array_element_type(
+    registry: &TypeRegistry,
+    ty: &CType,
+    context: &str,
+) -> Result<(), String> {
+    if matches!(registry.resolve_alias_type(ty), CType::Char | CType::UChar) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} requires char or unsigned char elements",
+            context
+        ))
+    }
+}
+
+fn byte_array_pointer_cast(ty: &CType) -> String {
+    format!("({} *)", render_c_type(ty))
 }
 
 fn indent_lines(lines: &[String], indent: &str) -> Vec<String> {

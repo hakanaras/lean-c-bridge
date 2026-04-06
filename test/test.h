@@ -424,6 +424,64 @@ static inline char** array_and_string_return(char* str_buffer, size_t buffer_siz
     return dynamic_string_array_return();
 }
 
+static inline void byte_array_take(unsigned char* bytes, size_t length) {
+    assert(bytes != NULL);
+    assert(length == 4);
+    assert(bytes[0] == 0);
+    assert(bytes[1] == 1);
+    assert(bytes[2] == 2);
+    assert(bytes[3] == UCHAR_MAX);
+}
+
+static inline void byte_array_take_nullable(unsigned char* bytes, size_t length, int selector) {
+    if (selector < 0) {
+        assert(bytes == NULL);
+        assert(length == 0);
+        return;
+    }
+
+    if (selector == 0) {
+        assert(bytes == NULL);
+        assert(length == 0);
+        return;
+    }
+
+    assert(bytes != NULL);
+    assert(length == 3);
+    assert(bytes[0] == 10);
+    assert(bytes[1] == 20);
+    assert(bytes[2] == 30);
+}
+
+static inline unsigned char* byte_array_return_with_out_length(size_t* length) {
+    unsigned char* bytes = malloc(4 * sizeof(unsigned char));
+    bytes[0] = 0;
+    bytes[1] = 1;
+    bytes[2] = 2;
+    bytes[3] = UCHAR_MAX;
+    *length = 4;
+    return bytes;
+}
+
+static inline unsigned char* byte_array_return_with_out_length_nullable(int selector, size_t* length) {
+    if (selector < 0) {
+        *length = 0;
+        return NULL;
+    }
+
+    if (selector == 0) {
+        *length = 0;
+        return malloc(sizeof(unsigned char));
+    }
+
+    unsigned char* bytes = malloc(3 * sizeof(unsigned char));
+    bytes[0] = 10;
+    bytes[1] = 20;
+    bytes[2] = 30;
+    *length = 3;
+    return bytes;
+}
+
 // -- Strings --
 
 static inline char* lit_string_return() {

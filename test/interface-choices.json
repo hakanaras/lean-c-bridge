@@ -670,6 +670,114 @@
       "return_value": null
     },
     {
+      "name": "byte_array_take",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Array": {
+              "nullable": false,
+              "element_conversion": null,
+              "byte_array": true
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "byte_array_take_nullable",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Array": {
+              "nullable": true,
+              "element_conversion": null,
+              "byte_array": true
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        },
+        {
+          "conversion_strategy": null
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "byte_array_return_with_out_length",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "Length": {
+                  "of_param_index": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "ArrayWithLength": {
+          "nullable": false,
+          "element_conversion": null,
+          "free_array_after_conversion": true,
+          "free_function": null,
+          "byte_array": true
+        }
+      }
+    },
+    {
+      "name": "byte_array_return_with_out_length_nullable",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": null
+        },
+        {
+          "conversion_strategy": {
+            "Out": {
+              "element_conversion": {
+                "Length": {
+                  "of_param_index": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": {
+        "ArrayWithLength": {
+          "nullable": true,
+          "element_conversion": null,
+          "free_array_after_conversion": true,
+          "free_function": null,
+          "byte_array": true
+        }
+      }
+    },
+    {
       "name": "dynamic_array_take",
       "omit": false,
       "no_io": false,

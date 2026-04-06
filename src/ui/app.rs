@@ -77,6 +77,7 @@ pub enum FormPath {
     ParamStringNullable(usize),
     ParamStringBufferSize(usize),
     ParamArrayNullable(usize),
+    ParamArrayByteArray(usize),
     ParamElementConversion(usize),
     ParamLengthOf(usize),
     ParamStaticExpr(usize),
@@ -84,6 +85,7 @@ pub enum FormPath {
     ParamStaticPostStmt(usize),
     ReturnConversionSelector(ReturnEditorTarget),
     ReturnNullable(ReturnEditorTarget),
+    ReturnByteArray(ReturnEditorTarget),
     ReturnFree(ReturnEditorTarget),
     ReturnFreeFunction(ReturnEditorTarget),
     ReturnLengthOf(ReturnEditorTarget),
@@ -451,6 +453,7 @@ impl App {
                         ParameterSpecialConversion::Array {
                             nullable,
                             element_conversion,
+                            byte_array,
                         } => {
                             items.push(FormItem {
                                 label: "Nullable".to_string(),
@@ -462,22 +465,37 @@ impl App {
                                 indent: 2,
                             });
 
-                            let elem_options = element_conversion_options(get_pointee(&param.ty));
-                            let elem_selected = element_conversion
-                                .as_ref()
-                                .map(|ec| elem_conversion_to_index(ec, &elem_options))
-                                .unwrap_or(0);
+                            if supports_byte_array(&self.registry, get_pointee(&param.ty)) {
+                                items.push(FormItem {
+                                    label: "Marshal as ByteArray".to_string(),
+                                    kind: FormItemKind::Checkbox {
+                                        checked: *byte_array,
+                                        enabled: !omit,
+                                    },
+                                    path: FormPath::ParamArrayByteArray(i),
+                                    indent: 2,
+                                });
+                            }
 
-                            items.push(FormItem {
-                                label: "Element conversion".to_string(),
-                                kind: FormItemKind::Selector {
-                                    options: elem_options,
-                                    selected: elem_selected,
-                                    enabled: !omit,
-                                },
-                                path: FormPath::ParamElementConversion(i),
-                                indent: 2,
-                            });
+                            if !byte_array {
+                                let elem_options =
+                                    element_conversion_options(get_pointee(&param.ty));
+                                let elem_selected = element_conversion
+                                    .as_ref()
+                                    .map(|ec| elem_conversion_to_index(ec, &elem_options))
+                                    .unwrap_or(0);
+
+                                items.push(FormItem {
+                                    label: "Element conversion".to_string(),
+                                    kind: FormItemKind::Selector {
+                                        options: elem_options,
+                                        selected: elem_selected,
+                                        enabled: !omit,
+                                    },
+                                    path: FormPath::ParamElementConversion(i),
+                                    indent: 2,
+                                });
+                            }
                         }
                         ParameterSpecialConversion::Out { element_conversion } => {
                             let out_target = ReturnEditorTarget::ParamOut(i);
@@ -504,7 +522,14 @@ impl App {
 
                             if let Some(conversion) = element_conversion.as_deref() {
                                 push_return_conversion_items(
-                                    &mut items, choices, conversion, out_ty, out_target, !omit, 3,
+                                    &mut items,
+                                    &self.registry,
+                                    choices,
+                                    conversion,
+                                    out_ty,
+                                    out_target,
+                                    !omit,
+                                    3,
                                     true,
                                 );
                             }
@@ -600,6 +625,7 @@ impl App {
             if let Some(conversion) = &choices.return_value {
                 push_return_conversion_items(
                     &mut items,
+                    &self.registry,
                     choices,
                     conversion,
                     Some(&func.return_type),
@@ -783,6 +809,21 @@ impl App {
                     *nullable = checked;
                 }
             }
+            FormPath::ParamArrayByteArray(i) => {
+                if let Some(ParameterSpecialConversion::Array {
+                    byte_array,
+                    element_conversion,
+                    ..
+                }) = self.form_choices.parameters[*i]
+                    .conversion_strategy
+                    .as_mut()
+                {
+                    *byte_array = checked;
+                    if checked {
+                        *element_conversion = None;
+                    }
+                }
+            }
             FormPath::ReturnNullable(target) => {
                 if let Some(conversion) = get_return_conversion_mut(&mut self.form_choices, target)
                 {
@@ -794,6 +835,19 @@ impl App {
                             *nullable = checked;
                         }
                         ReturnValueSpecialConversion::Length { .. } => {}
+                    }
+                }
+            }
+            FormPath::ReturnByteArray(target) => {
+                if let Some(ReturnValueSpecialConversion::ArrayWithLength {
+                    byte_array,
+                    element_conversion,
+                    ..
+                }) = get_return_conversion_mut(&mut self.form_choices, target)
+                {
+                    *byte_array = checked;
+                    if checked {
+                        *element_conversion = None;
                     }
                 }
             }
@@ -840,6 +894,7 @@ impl App {
                         "Array" => Some(ParameterSpecialConversion::Array {
                             nullable: false,
                             element_conversion: None,
+                            byte_array: false,
                         }),
                         "Out" => Some(ParameterSpecialConversion::Out {
                             element_conversion: None,
@@ -877,6 +932,7 @@ impl App {
                             "Array" => Some(Box::new(ParameterSpecialConversion::Array {
                                 nullable: false,
                                 element_conversion: None,
+                                byte_array: false,
                             })),
                             _ => None,
                         };
@@ -1412,6 +1468,7 @@ fn return_conversion_from_option(
             element_conversion: None,
             free_array_after_conversion: false,
             free_function: None,
+            byte_array: false,
         }),
         "NullTerminatedArray" => Some(ReturnValueSpecialConversion::NullTerminatedArray {
             nullable: false,
@@ -1563,6 +1620,7 @@ fn nested_return_editor_target(target: &ReturnEditorTarget) -> Option<ReturnEdit
 
 fn push_return_conversion_items(
     items: &mut Vec<FormItem>,
+    registry: &TypeRegistry,
     choices: &FunctionChoices,
     conversion: &ReturnValueSpecialConversion,
     ty: Option<&CType>,
@@ -1593,7 +1651,7 @@ fn push_return_conversion_items(
         _ => "Free after conversion",
     };
 
-    let (nullable, free, free_function, element_conversion, element_label) = match conversion {
+    let (nullable, free, free_function, element_conversion, element_label, byte_array) = match conversion {
         ReturnValueSpecialConversion::String {
             nullable,
             free,
@@ -1602,6 +1660,7 @@ fn push_return_conversion_items(
             Some(nullable),
             Some(free),
             free_function.as_ref(),
+            None,
             None,
             None,
         ),
@@ -1616,18 +1675,21 @@ fn push_return_conversion_items(
             free_function.as_ref(),
             Some(element_conversion),
             Some("Pointed value conversion"),
+            None,
         ),
         ReturnValueSpecialConversion::ArrayWithLength {
             nullable,
             element_conversion,
             free_array_after_conversion,
             free_function,
+            byte_array,
         } => (
             Some(nullable),
             Some(free_array_after_conversion),
             free_function.as_ref(),
             Some(element_conversion),
             Some("Element conversion"),
+            Some(*byte_array),
         ),
         ReturnValueSpecialConversion::NullTerminatedArray {
             nullable,
@@ -1640,6 +1702,7 @@ fn push_return_conversion_items(
             free_function.as_ref(),
             Some(element_conversion),
             Some("Element conversion"),
+            None,
         ),
         ReturnValueSpecialConversion::Length { .. } => unreachable!(),
     };
@@ -1680,7 +1743,21 @@ fn push_return_conversion_items(
         }
     }
 
-    if allow_nested_element_editor {
+    if let (Some(byte_array_checked), Some(ty)) = (byte_array, ty) {
+        if supports_byte_array(registry, get_pointee(ty)) {
+            items.push(FormItem {
+                label: "Marshal as ByteArray".to_string(),
+                kind: FormItemKind::Checkbox {
+                    checked: byte_array_checked,
+                    enabled,
+                },
+                path: FormPath::ReturnByteArray(target.clone()),
+                indent,
+            });
+        }
+    }
+
+    if allow_nested_element_editor && !byte_array.unwrap_or(false) {
         if let (Some(element_conversion), Some(element_label), Some(nested_target), Some(ty)) = (
             element_conversion,
             element_label,
@@ -1709,6 +1786,7 @@ fn push_return_conversion_items(
             if let Some(nested_conversion) = get_return_conversion_from_box(element_conversion) {
                 push_return_conversion_items(
                     items,
+                    registry,
                     choices,
                     nested_conversion,
                     element_ty,
@@ -1730,6 +1808,10 @@ fn get_return_conversion_from_box(
 
 fn is_pointer_to_pointer(ty: &CType) -> bool {
     matches!(get_pointee(ty), Some(inner) if is_pointer_like(inner))
+}
+
+fn supports_byte_array(registry: &TypeRegistry, ty: Option<&CType>) -> bool {
+    ty.is_some_and(|ty| matches!(registry.resolve_alias_type(ty), CType::Char | CType::UChar))
 }
 
 fn is_pointer_like(ty: &CType) -> bool {

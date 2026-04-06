@@ -62,6 +62,10 @@ pub enum ParameterSpecialConversion {
         nullable: bool,
         /// Optional conversion for the individual elements of the array
         element_conversion: Option<Box<ParameterSpecialConversion>>,
+        /// Whether this should be marshalled from a `ByteArray` instead of a regular `Array`.
+        /// Only available for elements `char`, `signed char`, and `unsigned char`.
+        #[serde(default)]
+        byte_array: bool,
     },
     /// Treat the parameter as an output pointer and add the value it points to to the return value by making it a tuple.
     Out {
@@ -132,6 +136,10 @@ pub enum ReturnValueSpecialConversion {
         /// When left empty, it defaults to `free` from the C standard library.
         /// Only has an effect if `free_array_after_conversion` is true.
         free_function: Option<String>,
+        /// Whether this should be marshalled to a `ByteArray` instead of a regular `Array`.
+        /// Only available for elements `char`, `signed char`, and `unsigned char`.
+        #[serde(default)]
+        byte_array: bool,
     },
     /// Automatically convert a pointer-to-pointer return value (which is interpreted as a null-terminated array)
     /// into a Lean Array.

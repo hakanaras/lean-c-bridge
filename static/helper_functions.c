@@ -6,6 +6,8 @@ static inline void lean_ffi_panic_if_null(void * ptr) {
     }
 }
 
+// -- Array and String Helpers --
+
 static inline void lean_ffi_check_allocation_size(size_t element_size, size_t count) {
     if (element_size != 0 && count > SIZE_MAX / element_size) {
         lean_internal_panic_out_of_memory();
@@ -89,4 +91,23 @@ static inline b_lean_obj_res lean_ffi_option_get(b_lean_obj_arg option) {
         lean_internal_panic("attempted to get value from none option");
     }
     return lean_ctor_get(option, 0);
+}
+
+// -- Byte Array Helpers --
+
+static inline lean_obj_res lean_ffi_mk_byte_array(const uint8_t *data, size_t size) {
+    lean_obj_res byte_array = lean_mk_empty_byte_array(lean_box(size));
+    for (size_t i = 0; i < size; i++) {
+        byte_array = lean_byte_array_push(byte_array, data[i]);
+    }
+    return byte_array;
+}
+
+static inline uint8_t *lean_ffi_byte_array_to_c(b_lean_obj_arg byte_array, size_t *size_out) {
+    *size_out = lean_unbox(lean_byte_array_size(byte_array));
+    uint8_t *data = LEAN_FFI_MALLOC_ARRAY_OR_NULL(uint8_t, *size_out);
+    for (size_t i = 0; i < *size_out; i++) {
+        data[i] = lean_byte_array_uget(byte_array, i);
+    }
+    return data;
 }

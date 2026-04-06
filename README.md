@@ -1,5 +1,5 @@
 
-### Disclaimer: This was largely written by Github Copilot.
+### Disclaimer: This was largely written by AI.
 
 # Lean-C-Bridge
 

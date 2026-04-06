@@ -35,6 +35,7 @@ pub struct ParameterChoices {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParameterSpecialConversion {
     /// Instead of passing the argument directly to the original C function, a pointer to it will be passed.
+    /// The pointer will be pointing to the stack, so the original C function may not keep the pointer after the function returns.
     Reference {
         /// Whether to use `Option` and pass `null` when `none`.
         #[serde(default)]
@@ -47,6 +48,9 @@ pub enum ParameterSpecialConversion {
         /// Whether to use `Option` and pass `null` when `none`.
         #[serde(default)]
         nullable: bool,
+        /// Whether to skip the `free` after the call. This is useful if the C function takes ownership of the string.
+        #[serde(default)]
+        skip_free: bool,
     },
     /// Pass an automatically allocated char* buffer that can be used by the original C function to write a string into.
     /// The buffer is subsequently converted back into a Lean String and added to the return value by making it a tuple.
@@ -66,6 +70,9 @@ pub enum ParameterSpecialConversion {
         /// Only available for elements `char`, `signed char`, and `unsigned char`.
         #[serde(default)]
         byte_array: bool,
+        /// Whether to skip the `free` after the call. This is useful if the C function takes ownership of the array.
+        #[serde(default)]
+        skip_free: bool,
     },
     /// Treat the parameter as an output pointer and add the value it points to to the return value by making it a tuple.
     Out {

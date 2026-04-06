@@ -39,6 +39,10 @@ impl NameGen {
     }
 }
 
+fn free_call(expr: &str) -> String {
+    format!("free((void *){});", expr)
+}
+
 #[derive(Clone)]
 struct LeanParam {
     name: String,
@@ -717,7 +721,7 @@ fn lean_type_for_parameter(
                 base_ty
             })
         }
-        Some(ParameterSpecialConversion::String { nullable }) => {
+        Some(ParameterSpecialConversion::String { nullable, .. }) => {
             if registry.is_char_pointer_like(ty) {
                 let base_ty = "String".to_string();
                 Ok(if *nullable {
@@ -736,6 +740,7 @@ fn lean_type_for_parameter(
             nullable,
             element_conversion,
             byte_array,
+            ..
         }) => {
             let element_ty = registry
                 .pointer_element_type(ty)
@@ -1246,9 +1251,17 @@ fn prepare_parameter_value(
             normalize_nested_strategy(element_conversion.as_deref()),
             top_level_adapter_param,
         ),
-        Some(ParameterSpecialConversion::String { nullable }) => {
-            prepare_string_parameter(lean_expr, name_gen, registry, ty, *nullable)
-        }
+        Some(ParameterSpecialConversion::String {
+            nullable,
+            skip_free,
+        }) => prepare_string_parameter(
+            lean_expr,
+            name_gen,
+            registry,
+            ty,
+            *nullable,
+            *skip_free,
+        ),
         Some(ParameterSpecialConversion::StringBuffer { .. }) => {
             Err("string buffer parameters are handled separately".to_string())
         }
@@ -1256,6 +1269,7 @@ fn prepare_parameter_value(
             nullable,
             element_conversion,
             byte_array,
+            skip_free,
         }) => prepare_array_parameter(
             lean_ctx,
             c_ctx,
@@ -1266,6 +1280,7 @@ fn prepare_parameter_value(
             *nullable,
             normalize_nested_strategy(element_conversion.as_deref()),
             *byte_array,
+            *skip_free,
         ),
         Some(ParameterSpecialConversion::Length { .. })
         | Some(ParameterSpecialConversion::StaticExpr { .. }) => {
@@ -1289,6 +1304,7 @@ fn prepare_string_parameter(
     registry: &TypeRegistry,
     ty: &CType,
     nullable: bool,
+    skip_free: bool,
 ) -> Result<PreparedValue, String> {
     if !registry.is_char_pointer_like(ty) {
         return Err("string conversion requires a char* parameter".to_string());
@@ -1320,7 +1336,11 @@ fn prepare_string_parameter(
     Ok(PreparedValue {
         pre,
         expr: cstr_var.clone(),
-        post: vec![format!("free({});", cstr_var)],
+        post: if skip_free {
+            Vec::new()
+        } else {
+            vec![free_call(&cstr_var)]
+        },
         length_expr: Some(bytes_var),
     })
 }
@@ -1383,6 +1403,7 @@ fn prepare_array_parameter(
     nullable: bool,
     element_strategy: Option<&ParameterSpecialConversion>,
     byte_array: bool,
+    skip_free: bool,
 ) -> Result<PreparedValue, String> {
     let element_ty = registry
         .pointer_element_type(ty)
@@ -1427,7 +1448,11 @@ fn prepare_array_parameter(
         return Ok(PreparedValue {
             pre,
             expr: data_var.clone(),
-            post: vec![format!("free({});", data_var)],
+            post: if skip_free {
+                Vec::new()
+            } else {
+                vec![free_call(&data_var)]
+            },
             length_expr: Some(len_var),
         });
     }
@@ -1515,7 +1540,10 @@ fn prepare_array_parameter(
 
     let mut post = Vec::new();
     match element_strategy {
-        Some(ParameterSpecialConversion::String { nullable }) => {
+        Some(ParameterSpecialConversion::String {
+            nullable,
+            skip_free: element_skip_free,
+        }) => {
             if !registry.is_char_pointer_like(&element_ty) {
                 return Err("string element conversion requires char* array elements".to_string());
             }
@@ -1541,12 +1569,17 @@ fn prepare_array_parameter(
             }
             pre.push(format!("    {}[{}] = {};", data_var, index_var, string_var));
 
-            post.push(format!(
-                "for (size_t {} = 0; {} < {}; ++{}) {{",
-                index_var, index_var, len_var, index_var
-            ));
-            post.push(format!("    free({}[{}]);", data_var, index_var));
-            post.push("}".to_string());
+            if !skip_free && !*element_skip_free {
+                post.push(format!(
+                    "for (size_t {} = 0; {} < {}; ++{}) {{",
+                    index_var, index_var, len_var, index_var
+                ));
+                post.push(format!(
+                    "    {}",
+                    free_call(&format!("{}[{}]", data_var, index_var))
+                ));
+                post.push("}".to_string());
+            }
         }
         _ => {
             let source_expr = if nullable { &array_expr } else { lean_expr };
@@ -1586,7 +1619,9 @@ fn prepare_array_parameter(
     } else if nullable {
         pre.push("}".to_string());
     }
-    post.push(format!("free({});", data_var));
+    if !skip_free {
+        post.push(free_call(&data_var));
+    }
 
     Ok(PreparedValue {
         pre,
@@ -1750,7 +1785,10 @@ fn prepare_reference_storage(
                 length_expr: nested_storage.length_expr,
             })
         }
-        Some(ParameterSpecialConversion::String { nullable }) => {
+        Some(ParameterSpecialConversion::String {
+            nullable,
+            skip_free,
+        }) => {
             if !registry.is_char_pointer_like(ty) {
                 return Err("string conversion requires a char* pointed value".to_string());
             }
@@ -1781,7 +1819,11 @@ fn prepare_reference_storage(
             Ok(PreparedStorage {
                 declarations,
                 init,
-                cleanup: vec![format!("free({});", storage_var)],
+                cleanup: if *skip_free {
+                    Vec::new()
+                } else {
+                    vec![free_call(storage_var)]
+                },
                 length_expr: Some(bytes_var),
             })
         }
@@ -1789,6 +1831,7 @@ fn prepare_reference_storage(
             nullable,
             element_conversion,
             byte_array,
+            skip_free,
         }) => {
             let prepared = prepare_array_parameter(
                 lean_ctx,
@@ -1800,6 +1843,7 @@ fn prepare_reference_storage(
                 *nullable,
                 normalize_nested_strategy(element_conversion.as_deref()),
                 *byte_array,
+                *skip_free,
             )?;
 
             Ok(PreparedStorage {

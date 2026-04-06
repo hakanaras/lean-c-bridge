@@ -75,8 +75,10 @@ pub enum FormPath {
     ParamConversion(usize),
     ParamReferenceNullable(usize),
     ParamStringNullable(usize),
+    ParamStringSkipFree(usize),
     ParamStringBufferSize(usize),
     ParamArrayNullable(usize),
+    ParamArraySkipFree(usize),
     ParamArrayByteArray(usize),
     ParamElementConversion(usize),
     ParamLengthOf(usize),
@@ -428,7 +430,10 @@ impl App {
                                 indent: 2,
                             });
                         }
-                        ParameterSpecialConversion::String { nullable } => {
+                        ParameterSpecialConversion::String {
+                            nullable,
+                            skip_free,
+                        } => {
                             items.push(FormItem {
                                 label: "Nullable".to_string(),
                                 kind: FormItemKind::Checkbox {
@@ -436,6 +441,16 @@ impl App {
                                     enabled: !omit,
                                 },
                                 path: FormPath::ParamStringNullable(i),
+                                indent: 2,
+                            });
+
+                            items.push(FormItem {
+                                label: "Skip free after call".to_string(),
+                                kind: FormItemKind::Checkbox {
+                                    checked: *skip_free,
+                                    enabled: !omit,
+                                },
+                                path: FormPath::ParamStringSkipFree(i),
                                 indent: 2,
                             });
                         }
@@ -454,6 +469,7 @@ impl App {
                             nullable,
                             element_conversion,
                             byte_array,
+                            skip_free,
                         } => {
                             items.push(FormItem {
                                 label: "Nullable".to_string(),
@@ -462,6 +478,16 @@ impl App {
                                     enabled: !omit,
                                 },
                                 path: FormPath::ParamArrayNullable(i),
+                                indent: 2,
+                            });
+
+                            items.push(FormItem {
+                                label: "Skip free after call".to_string(),
+                                kind: FormItemKind::Checkbox {
+                                    checked: *skip_free,
+                                    enabled: !omit,
+                                },
+                                path: FormPath::ParamArraySkipFree(i),
                                 indent: 2,
                             });
 
@@ -783,12 +809,21 @@ impl App {
                 self.form_choices.no_io = checked;
             }
             FormPath::ParamStringNullable(i) => {
-                if let Some(ParameterSpecialConversion::String { nullable }) =
+                if let Some(ParameterSpecialConversion::String { nullable, .. }) =
                     self.form_choices.parameters[*i]
                         .conversion_strategy
                         .as_mut()
                 {
                     *nullable = checked;
+                }
+            }
+            FormPath::ParamStringSkipFree(i) => {
+                if let Some(ParameterSpecialConversion::String { skip_free, .. }) =
+                    self.form_choices.parameters[*i]
+                        .conversion_strategy
+                        .as_mut()
+                {
+                    *skip_free = checked;
                 }
             }
             FormPath::ParamReferenceNullable(i) => {
@@ -807,6 +842,15 @@ impl App {
                         .as_mut()
                 {
                     *nullable = checked;
+                }
+            }
+            FormPath::ParamArraySkipFree(i) => {
+                if let Some(ParameterSpecialConversion::Array { skip_free, .. }) =
+                    self.form_choices.parameters[*i]
+                        .conversion_strategy
+                        .as_mut()
+                {
+                    *skip_free = checked;
                 }
             }
             FormPath::ParamArrayByteArray(i) => {
@@ -887,7 +931,10 @@ impl App {
                             nullable: false,
                             element_conversion: None,
                         }),
-                        "String" => Some(ParameterSpecialConversion::String { nullable: false }),
+                        "String" => Some(ParameterSpecialConversion::String {
+                            nullable: false,
+                            skip_free: false,
+                        }),
                         "StringBuffer" => {
                             Some(ParameterSpecialConversion::StringBuffer { buffer_size: 1024 })
                         }
@@ -895,6 +942,7 @@ impl App {
                             nullable: false,
                             element_conversion: None,
                             byte_array: false,
+                            skip_free: false,
                         }),
                         "Out" => Some(ParameterSpecialConversion::Out {
                             element_conversion: None,
@@ -928,11 +976,13 @@ impl App {
                             })),
                             "String" => Some(Box::new(ParameterSpecialConversion::String {
                                 nullable: false,
+                                skip_free: false,
                             })),
                             "Array" => Some(Box::new(ParameterSpecialConversion::Array {
                                 nullable: false,
                                 element_conversion: None,
                                 byte_array: false,
+                                skip_free: false,
                             })),
                             _ => None,
                         };

@@ -178,7 +178,7 @@ pub fn generate_function(
 
                 params.push(PreparedParam {
                     lean_param: None,
-                    pre: out_param_stack_prelude(&out_param),
+                    pre: out_param_stack_prelude(&out_param, registry),
                     arg_expr: format!("&{}", out_param.value_expr),
                     post: Vec::new(),
                     deferred_length_of: None,
@@ -435,7 +435,7 @@ pub fn generate_function(
     } else {
         body_lines.push(format!(
             "{} c_result = {};",
-            render_c_type(&function.return_type),
+            render_c_type(&function.return_type, registry),
             call_expr
         ));
     }
@@ -668,10 +668,10 @@ fn prepare_out_parameter(
     })
 }
 
-fn out_param_stack_prelude(out_param: &OutParam) -> Vec<String> {
+fn out_param_stack_prelude(out_param: &OutParam, registry: &TypeRegistry) -> Vec<String> {
     vec![format!(
         "{};",
-        render_zero_initialized_declaration(&out_param.value_ty, &out_param.value_expr)
+        render_zero_initialized_declaration(&out_param.value_ty, &out_param.value_expr, registry)
     )]
 }
 
@@ -975,7 +975,7 @@ fn lean_type_for_default(
         CType::Enum(_) => ensure_enum_decl(lean_ctx, c_ctx, registry, ty),
         CType::Struct(_) => ensure_struct_decl(lean_ctx, c_ctx, registry, ty),
         CType::Pointer { .. } | CType::IncompleteArray { .. } | CType::Array { size: None, .. } => {
-            ensure_pointer_decl(lean_ctx, ty)
+            ensure_pointer_decl(lean_ctx, registry, ty)
         }
         CType::Array {
             ref element,
@@ -998,8 +998,12 @@ fn lean_type_for_default(
     }
 }
 
-fn ensure_pointer_decl(lean_ctx: &mut LeanContext, ty: &CType) -> Result<String, String> {
-    let name = pointer_opaque_name(ty)?;
+fn ensure_pointer_decl(
+    lean_ctx: &mut LeanContext,
+    registry: &TypeRegistry,
+    ty: &CType,
+) -> Result<String, String> {
+    let name = pointer_opaque_name(ty, registry)?;
     lean_ctx.declare(
         format!("opaque_{}", name),
         format!("opaque {} : Type", sanitize_lean_type_name(&name)),
@@ -1007,26 +1011,30 @@ fn ensure_pointer_decl(lean_ctx: &mut LeanContext, ty: &CType) -> Result<String,
     Ok(sanitize_lean_type_name(&name))
 }
 
-fn pointer_opaque_name(ty: &CType) -> Result<String, String> {
+fn pointer_opaque_name(ty: &CType, registry: &TypeRegistry) -> Result<String, String> {
     match ty {
         CType::Pointer { pointee, .. } => {
-            pointee_type_name(pointee).map(|name| format!("{}Ptr", name))
+            pointee_type_name(pointee, registry).map(|name| format!("{}Ptr", name))
         }
         CType::IncompleteArray { element } => {
-            pointee_type_name(element).map(|name| format!("{}Ptr", name))
+            pointee_type_name(element, registry).map(|name| format!("{}Ptr", name))
         }
         CType::Array {
             element,
             size: None,
-        } => pointee_type_name(element).map(|name| format!("{}Ptr", name)),
+        } => pointee_type_name(element, registry).map(|name| format!("{}Ptr", name)),
         _ => Err("type is not pointer-like".to_string()),
     }
 }
 
-fn pointee_type_name(ty: &CType) -> Result<String, String> {
+fn pointee_type_name(ty: &CType, registry: &TypeRegistry) -> Result<String, String> {
+    if let Some(name) = registry.struct_lean_name(ty) {
+        return Ok(name);
+    }
+
     match ty {
         CType::Pointer { .. } | CType::IncompleteArray { .. } | CType::Array { size: None, .. } => {
-            pointer_opaque_name(ty)
+            pointer_opaque_name(ty, registry)
         }
         CType::Typedef(name) | CType::Struct(name) | CType::Enum(name) | CType::Union(name) => {
             Ok(sanitize_lean_type_name(name))
@@ -1051,7 +1059,7 @@ fn pointee_type_name(ty: &CType) -> Result<String, String> {
         CType::Array {
             element,
             size: Some(_),
-        } => Ok(format!("{}Array", pointee_type_name(element)?)),
+        } => Ok(format!("{}Array", pointee_type_name(element, registry)?)),
         CType::FunctionPointer { .. } => Err("function pointers are unsupported".to_string()),
         CType::Unknown(name) => Ok(sanitize_lean_type_name(name)),
     }
@@ -1420,7 +1428,7 @@ fn prepare_array_parameter(
 
         let len_var = name_gen.next("array_len");
         let data_var = name_gen.next("array_data");
-        let element_c_ty = render_c_type(&element_ty);
+        let element_c_ty = render_c_type(&element_ty, registry);
         let mut pre = vec![format!("size_t {} = 0;", len_var)];
 
         if nullable {
@@ -1429,7 +1437,7 @@ fn prepare_array_parameter(
             pre.push(format!(
                 "    {} = {}lean_ffi_byte_array_to_c(lean_ffi_option_get({}), &{});",
                 data_var,
-                byte_array_pointer_cast(&element_ty),
+                byte_array_pointer_cast(&element_ty, registry),
                 lean_expr,
                 len_var
             ));
@@ -1439,7 +1447,7 @@ fn prepare_array_parameter(
                 "{} * {} = {}lean_ffi_byte_array_to_c({}, &{});",
                 element_c_ty,
                 data_var,
-                byte_array_pointer_cast(&element_ty),
+                byte_array_pointer_cast(&element_ty, registry),
                 lean_expr,
                 len_var
             ));
@@ -1489,7 +1497,7 @@ fn prepare_array_parameter(
     } else {
         String::new()
     };
-    let element_c_ty = render_c_type(&element_ty);
+    let element_c_ty = render_c_type(&element_ty, registry);
     let is_pointer_element = registry.is_pointer_like(&element_ty);
 
     let mut pre = vec![format!("size_t {} = 0;", len_var)];
@@ -1663,7 +1671,7 @@ fn prepare_reference_parameter(
         )?;
 
         let mut pre = storage.declarations;
-        pre.push(format!("{} {} = NULL;", render_c_type(ty), pointer_var));
+        pre.push(format!("{} {} = NULL;", render_c_type(ty, registry), pointer_var));
         pre.push(format!("if (lean_ffi_option_is_some({})) {{", lean_expr));
         pre.extend(indent_lines(&storage.init, "    "));
         pre.push(format!("    {} = &{};", pointer_var, value_var));
@@ -1753,7 +1761,7 @@ fn prepare_reference_storage(
 
             let mut declarations = vec![format!(
                 "{};",
-                render_zero_initialized_declaration(ty, storage_var)
+                render_zero_initialized_declaration(ty, storage_var, registry)
             )];
             declarations.extend(nested_storage.declarations);
 
@@ -1797,7 +1805,7 @@ fn prepare_reference_storage(
             let mut declarations = vec![format!("size_t {} = 0;", bytes_var)];
             declarations.push(format!(
                 "{};",
-                render_zero_initialized_declaration(ty, storage_var)
+                render_zero_initialized_declaration(ty, storage_var, registry)
             ));
 
             let init = if *nullable {
@@ -1849,7 +1857,7 @@ fn prepare_reference_storage(
             Ok(PreparedStorage {
                 declarations: vec![format!(
                     "{};",
-                    render_zero_initialized_declaration(ty, storage_var)
+                    render_zero_initialized_declaration(ty, storage_var, registry)
                 )],
                 init: prepared
                     .pre
@@ -1915,7 +1923,7 @@ fn prepare_reference_storage_default(
             Ok(PreparedStorage {
                 declarations: vec![format!(
                     "{};",
-                    render_zero_initialized_declaration(ty, storage_var)
+                    render_zero_initialized_declaration(ty, storage_var, registry)
                 )],
                 init: prepared.pre,
                 cleanup: Vec::new(),
@@ -1939,7 +1947,7 @@ fn prepare_reference_storage_default(
             Ok(PreparedStorage {
                 declarations: vec![format!(
                     "{};",
-                    render_zero_initialized_declaration(ty, storage_var)
+                    render_zero_initialized_declaration(ty, storage_var, registry)
                 )],
                 init,
                 cleanup: Vec::new(),
@@ -1967,7 +1975,11 @@ fn prepare_default_parameter_value(
         | CType::ULongLong
         | CType::SizeT => Ok(PreparedValue {
             pre: Vec::new(),
-            expr: format!("({})lean_uint64_of_nat({})", render_c_type(ty), lean_expr),
+            expr: format!(
+                "({})lean_uint64_of_nat({})",
+                render_c_type(ty, registry),
+                lean_expr
+            ),
             post: Vec::new(),
             length_expr: None,
         }),
@@ -1978,16 +1990,24 @@ fn prepare_default_parameter_value(
         | CType::LongLong
         | CType::PtrdiffT => Ok(PreparedValue {
             pre: Vec::new(),
-            expr: format!("({})lean_int64_of_int({})", render_c_type(ty), lean_expr),
+            expr: format!(
+                "({})lean_int64_of_int({})",
+                render_c_type(ty, registry),
+                lean_expr
+            ),
             post: Vec::new(),
             length_expr: None,
         }),
         CType::Float | CType::Double | CType::LongDouble => Ok(PreparedValue {
             pre: Vec::new(),
             expr: if top_level_adapter_param {
-                format!("({}){}", render_c_type(ty), lean_expr)
+                format!("({}){}", render_c_type(ty, registry), lean_expr)
             } else {
-                format!("({})lean_unbox_float({})", render_c_type(ty), lean_expr)
+                format!(
+                    "({})lean_unbox_float({})",
+                    render_c_type(ty, registry),
+                    lean_expr
+                )
             },
             post: Vec::new(),
             length_expr: None,
@@ -2046,7 +2066,11 @@ fn prepare_enum_from_lean(
                 int_var, enum_name, arg_var
             ),
         ],
-        expr: format!("({})lean_scalar_to_int64({})", render_c_type(ty), int_var),
+        expr: format!(
+            "({})lean_scalar_to_int64({})",
+            render_c_type(ty, registry),
+            int_var
+        ),
         post: vec![format!("lean_dec({});", int_var)],
         length_expr: None,
     })
@@ -2066,7 +2090,7 @@ fn prepare_struct_from_lean(
     ensure_struct_decl(lean_ctx, c_ctx, registry, ty)?;
 
     let struct_var = name_gen.next("struct_value");
-    let mut pre = vec![format!("{} {} = {{0}};", render_c_type(ty), struct_var)];
+    let mut pre = vec![format!("{} {} = {{0}};", render_c_type(ty, registry), struct_var)];
 
     for field in fields {
         if field.name.is_empty() {
@@ -2164,7 +2188,7 @@ fn prepare_static_array_from_lean(
     if !array_var.contains('.') {
         pre.push(format!(
             "{} = {{0}};",
-            render_array_declaration(element_ty, &array_var, size)
+            render_array_declaration(element_ty, &array_var, size, registry)
         ));
     }
     pre.push(format!(
@@ -2292,7 +2316,7 @@ fn prepare_return_value(
 
         let source_expr = c_expr.unwrap();
         let element_var = name_gen.next("deref_value");
-        let element_c_ty = render_c_type(&element_ty);
+        let element_c_ty = render_c_type(&element_ty, registry);
         let nested = prepare_return_value(
             lean_ctx,
             c_ctx,
@@ -2444,7 +2468,7 @@ fn prepare_return_value(
         let len_var = name_gen.next("array_len");
         let index_var = name_gen.next("i");
         let element_var = name_gen.next("array_elem");
-        let element_c_ty = render_c_type(&element_ty);
+        let element_c_ty = render_c_type(&element_ty, registry);
         let source_expr = c_expr.unwrap();
         let array_var = if *nullable {
             name_gen.next("lean_array_value")
@@ -2572,7 +2596,7 @@ fn prepare_return_value(
         let len_var = name_gen.next("array_len");
         let index_var = name_gen.next("i");
         let element_var = name_gen.next("array_elem");
-        let element_c_ty = render_c_type(&element_ty);
+        let element_c_ty = render_c_type(&element_ty, registry);
         let source_expr = c_expr.unwrap();
         let array_var = if *nullable {
             name_gen.next("lean_array_value")
@@ -2893,12 +2917,14 @@ fn prepare_static_array_return(
 
 fn pointer_cast_type(ty: &CType, registry: &TypeRegistry) -> Result<String, String> {
     match registry.resolve_alias_type(ty) {
-        CType::Pointer { .. } => Ok(render_c_type(ty)),
-        CType::IncompleteArray { element } => Ok(format!("{}*", render_c_type(&element))),
+        CType::Pointer { .. } => Ok(render_c_type(ty, registry)),
+        CType::IncompleteArray { element } => {
+            Ok(format!("{}*", render_c_type(&element, registry)))
+        }
         CType::Array {
             element,
             size: None,
-        } => Ok(format!("{}*", render_c_type(&element))),
+        } => Ok(format!("{}*", render_c_type(&element, registry))),
         _ => Err("type is not pointer-like".to_string()),
     }
 }
@@ -2924,8 +2950,8 @@ fn ensure_byte_array_element_type(
     }
 }
 
-fn byte_array_pointer_cast(ty: &CType) -> String {
-    format!("({} *)", render_c_type(ty))
+fn byte_array_pointer_cast(ty: &CType, registry: &TypeRegistry) -> String {
+    format!("({} *)", render_c_type(ty, registry))
 }
 
 fn indent_lines(lines: &[String], indent: &str) -> Vec<String> {

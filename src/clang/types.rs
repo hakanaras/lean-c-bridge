@@ -81,6 +81,7 @@ pub enum CDeclaration {
     Typedef {
         name: String,
         underlying_type: CType,
+        underlying_declaration: Option<Box<CDeclaration>>,
     },
     #[allow(dead_code)]
     Variable {

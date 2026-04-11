@@ -337,7 +337,7 @@ static inline long double no_io_long_double_pass_through(long double ld) {
 
 // -- Enums --
 
-typedef enum test_enum {
+typedef enum {
     TEST_ENUM_VALUE_1 = 1,
     TEST_ENUM_VALUE_2
 } test_enum;
@@ -537,6 +537,38 @@ static inline void reference_string_take_with_length(char** value, size_t length
 
 static inline void reference_nested_int_take(int** value) {
     assert(**value == 77);
+}
+
+// -- Canonical Struct Names --
+
+typedef struct named_struct_tag {
+    int value;
+} named_struct_alias;
+
+static inline named_struct_alias named_struct_alias_return() {
+    struct named_struct_tag value = {
+        .value = 17,
+    };
+    return value;
+}
+
+static inline void named_struct_alias_take(named_struct_alias value) {
+    assert(value.value == 17);
+}
+
+typedef struct {
+    int value;
+} anonymous_struct_typedef;
+
+static inline anonymous_struct_typedef anonymous_struct_typedef_return() {
+    anonymous_struct_typedef value = {
+        .value = 23,
+    };
+    return value;
+}
+
+static inline void anonymous_struct_typedef_take(anonymous_struct_typedef value) {
+    assert(value.value == 23);
 }
 
 // -- Structs --

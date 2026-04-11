@@ -54,17 +54,17 @@ fn convert_entity(entity: &clang::Entity) -> Option<CDeclaration> {
             })
         }
         EntityKind::StructDecl => {
-            let name = entity.get_name();
+            let name = declaration_name(entity);
             let fields = extract_fields(entity);
             Some(CDeclaration::Struct { name, fields })
         }
         EntityKind::UnionDecl => {
-            let name = entity.get_name();
+            let name = declaration_name(entity);
             let fields = extract_fields(entity);
             Some(CDeclaration::Union { name, fields })
         }
         EntityKind::EnumDecl => {
-            let name = entity.get_name();
+            let name = declaration_name(entity);
             let variants = entity
                 .get_children()
                 .iter()
@@ -80,13 +80,20 @@ fn convert_entity(entity: &clang::Entity) -> Option<CDeclaration> {
         }
         EntityKind::TypedefDecl => {
             let name = entity.get_name()?;
-            let underlying_type = entity
-                .get_typedef_underlying_type()
-                .map(|t| convert_type(&t))
+            let clang_underlying_type = entity.get_typedef_underlying_type();
+            let underlying_type = clang_underlying_type
+                .as_ref()
+                .map(convert_type)
                 .unwrap_or(CType::Unknown("unknown".into()));
+            let underlying_declaration = clang_underlying_type
+                .as_ref()
+                .and_then(|ty| ty.get_declaration())
+                .and_then(|declaration| convert_tagged_declaration(&declaration))
+                .or_else(|| extract_typedef_underlying_declaration(entity));
             Some(CDeclaration::Typedef {
                 name,
                 underlying_type,
+                underlying_declaration,
             })
         }
         EntityKind::VarDecl => {
@@ -120,6 +127,81 @@ fn extract_fields(entity: &clang::Entity) -> Vec<CField> {
             })
         })
         .collect()
+}
+
+fn declaration_name(entity: &clang::Entity) -> Option<String> {
+    if entity.is_anonymous() || !name_is_spelled_as_tag(entity) {
+        None
+    } else {
+        entity.get_name()
+    }
+}
+
+fn name_is_spelled_as_tag(entity: &clang::Entity) -> bool {
+    let keyword = match entity.get_kind() {
+        EntityKind::StructDecl => "struct",
+        EntityKind::UnionDecl => "union",
+        EntityKind::EnumDecl => "enum",
+        _ => return true,
+    };
+
+    let name_ranges = entity.get_name_ranges();
+    let Some(name_range) = name_ranges.first() else {
+        return false;
+    };
+    let location = name_range.get_start().get_spelling_location();
+    let Some(file) = location.file else {
+        return false;
+    };
+    let Ok(source) = std::fs::read_to_string(file.get_path()) else {
+        return false;
+    };
+    let offset = location.offset as usize;
+    if offset > source.len() {
+        return false;
+    }
+
+    source[..offset]
+        .trim_end_matches(char::is_whitespace)
+        .ends_with(keyword)
+}
+
+fn convert_tagged_declaration(entity: &clang::Entity) -> Option<Box<CDeclaration>> {
+    match entity.get_kind() {
+        EntityKind::StructDecl => Some(Box::new(CDeclaration::Struct {
+            name: declaration_name(entity),
+            fields: extract_fields(entity),
+        })),
+        EntityKind::UnionDecl => Some(Box::new(CDeclaration::Union {
+            name: declaration_name(entity),
+            fields: extract_fields(entity),
+        })),
+        EntityKind::EnumDecl => {
+            let variants = entity
+                .get_children()
+                .iter()
+                .filter(|c| c.get_kind() == EntityKind::EnumConstantDecl)
+                .filter_map(|c| {
+                    Some(CEnumVariant {
+                        name: c.get_name()?,
+                        value: c.get_enum_constant_value().map(|(signed, _)| signed),
+                    })
+                })
+                .collect();
+            Some(Box::new(CDeclaration::Enum {
+                name: declaration_name(entity),
+                variants,
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn extract_typedef_underlying_declaration(entity: &clang::Entity) -> Option<Box<CDeclaration>> {
+    entity
+        .get_children()
+        .iter()
+        .find_map(|child| convert_tagged_declaration(child))
 }
 
 fn convert_type(ty: &clang::Type) -> CType {
@@ -183,18 +265,34 @@ fn convert_type(ty: &clang::Type) -> CType {
             CType::Typedef(name)
         }
         TypeKind::Record => {
-            let mut name = ty.get_display_name();
-            remove_prefix(&mut name, "const ");
+            let mut display_name = ty.get_display_name();
+            remove_prefix(&mut display_name, "const ");
+            let is_union = display_name.starts_with("union ");
+            let declaration = ty.get_declaration();
+            let mut name = if declaration.as_ref().is_some_and(clang::Entity::is_anonymous) {
+                String::new()
+            } else if let Some(name) = declaration.as_ref().and_then(declaration_name) {
+                name
+            } else {
+                display_name
+            };
             remove_prefix(&mut name, "union ");
             remove_prefix(&mut name, "struct ");
-            if name.starts_with("union ") {
+            if is_union {
                 CType::Union(name)
             } else {
                 CType::Struct(name)
             }
         }
         TypeKind::Enum => {
-            let mut name = ty.get_display_name();
+            let declaration = ty.get_declaration();
+            let mut name = if declaration.as_ref().is_some_and(clang::Entity::is_anonymous) {
+                String::new()
+            } else if let Some(name) = declaration.as_ref().and_then(declaration_name) {
+                name
+            } else {
+                ty.get_display_name()
+            };
             remove_prefix(&mut name, "enum ");
             CType::Enum(name)
         }

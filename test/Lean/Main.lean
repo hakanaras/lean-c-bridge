@@ -158,6 +158,14 @@ def test_arrays : IO Unit := do
 
 
 def test_structs : IO Unit := do
+  let named : named_struct_tag <- named_struct_alias_return
+  assert! named.value == 17
+  named_struct_alias_take { value := 17 }
+
+  let anonymous : anonymous_struct_typedef <- anonymous_struct_typedef_return
+  assert! anonymous.value == 23
+  anonymous_struct_typedef_take { value := 23 }
+
   let s1 <- struct_return
   assert! s1.ints.bool_false == 0
   assert! s1.ints.bool_true == 1

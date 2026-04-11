@@ -1,3 +1,4 @@
+use super::type_registry::TypeRegistry;
 use crate::clang::types::CType;
 use std::fmt::Write;
 
@@ -16,7 +17,7 @@ pub(crate) fn render_c_function(
     source
 }
 
-pub(crate) fn render_c_type(ty: &CType) -> String {
+pub(crate) fn render_c_type(ty: &CType, registry: &TypeRegistry) -> String {
     match ty {
         CType::Void => "void".to_string(),
         CType::Bool => "bool".to_string(),
@@ -37,47 +38,61 @@ pub(crate) fn render_c_type(ty: &CType) -> String {
         CType::PtrdiffT => "ptrdiff_t".to_string(),
         CType::Pointer { is_const, pointee } => {
             if *is_const {
-                format!("const {}*", render_c_type(pointee))
+                format!("const {}*", render_c_type(pointee, registry))
             } else {
-                format!("{}*", render_c_type(pointee))
+                format!("{}*", render_c_type(pointee, registry))
             }
         }
         CType::Array { element, size } => match size {
-            Some(size) => format!("{}[{}]", render_c_type(element), size),
-            None => format!("{}[]", render_c_type(element)),
+            Some(size) => format!("{}[{}]", render_c_type(element, registry), size),
+            None => format!("{}[]", render_c_type(element, registry)),
         },
-        CType::Struct(name) => format!("struct {}", name),
+        CType::Struct(name) => registry
+            .struct_c_type(ty)
+            .unwrap_or_else(|| format!("struct {}", name)),
         CType::Union(name) => format!("union {}", name),
         CType::Enum(name) => format!("enum {}", name),
-        CType::Typedef(name) => name.clone(),
+        CType::Typedef(name) => registry.struct_c_type(ty).unwrap_or_else(|| name.clone()),
         CType::FunctionPointer {
             return_type,
             parameters,
         } => format!(
             "{}(*)({})",
-            render_c_type(return_type),
+            render_c_type(return_type, registry),
             parameters
                 .iter()
-                .map(render_c_type)
+                .map(|parameter| render_c_type(parameter, registry))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        CType::IncompleteArray { element } => format!("{}[]", render_c_type(element)),
+        CType::IncompleteArray { element } => format!("{}[]", render_c_type(element, registry)),
         CType::Unknown(name) => name.clone(),
     }
 }
 
-pub(crate) fn render_array_declaration(element_ty: &CType, name: &str, size: usize) -> String {
-    format!("{} {}[{}]", render_c_type(element_ty), name, size)
+pub(crate) fn render_array_declaration(
+    element_ty: &CType,
+    name: &str,
+    size: usize,
+    registry: &TypeRegistry,
+) -> String {
+    format!("{} {}[{}]", render_c_type(element_ty, registry), name, size)
 }
 
-pub(crate) fn render_zero_initialized_declaration(ty: &CType, name: &str) -> String {
+pub(crate) fn render_zero_initialized_declaration(
+    ty: &CType,
+    name: &str,
+    registry: &TypeRegistry,
+) -> String {
     match ty {
         CType::Array {
             element,
             size: Some(size),
-        } => format!("{} = {{0}}", render_array_declaration(element, name, *size)),
-        _ => format!("{} {} = {{0}}", render_c_type(ty), name),
+        } => format!(
+            "{} = {{0}}",
+            render_array_declaration(element, name, *size, registry)
+        ),
+        _ => format!("{} {} = {{0}}", render_c_type(ty, registry), name),
     }
 }
 

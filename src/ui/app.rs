@@ -367,7 +367,7 @@ impl App {
         // Parameters
         for (i, param) in func.parameters.iter().enumerate() {
             let param_name = param.name.as_deref().unwrap_or("?");
-            let type_str = render_c_type(&param.ty);
+            let type_str = render_c_type(&param.ty, &self.registry);
 
             items.push(FormItem {
                 label: format!("Parameter {}: {} ({})", i, param_name, type_str),
@@ -619,7 +619,7 @@ impl App {
         }
 
         // Return type
-        let ret_type_str = render_c_type(&func.return_type);
+        let ret_type_str = render_c_type(&func.return_type, &self.registry);
         items.push(FormItem {
             label: format!("Return ({})", ret_type_str),
             kind: FormItemKind::Header,

@@ -1,5 +1,5 @@
 use crate::{
-    clang::types::{CEnumVariant, CFunction, CType},
+    clang::types::{CEnumVariant, CField, CFunction, CType},
     generator::{c_context::CContext, lean_context::LeanContext},
     options::interface_choices::{
         FunctionChoices, ParameterSpecialConversion, ReturnValueSpecialConversion,
@@ -77,6 +77,11 @@ struct PreparedStorage {
     init: Vec<String>,
     cleanup: Vec<String>,
     length_expr: Option<String>,
+}
+
+enum LeanStructFieldLayout {
+    Object { index: usize },
+    Float { scalar_index: usize },
 }
 
 pub fn generate_function(
@@ -1129,9 +1134,6 @@ fn ensure_struct_decl(
         .ok_or_else(|| "struct metadata is not available".to_string())?;
 
     let mut lean_fields = Vec::with_capacity(fields.len());
-    let mut helper_params = Vec::with_capacity(fields.len());
-    let mut getter_defs = Vec::with_capacity(fields.len());
-    let mut getter_decls = Vec::with_capacity(fields.len());
 
     for field in fields {
         if field.name.is_empty() {
@@ -1141,96 +1143,75 @@ fn ensure_struct_decl(
         let lean_field_name = sanitize_lean_field_name(&field.name);
         let lean_field_ty = lean_type_for_default(lean_ctx, c_ctx, registry, &field.ty)?;
         lean_fields.push(format!("  {} : {}", lean_field_name, lean_field_ty));
-        helper_params.push(format!("({} : {})", lean_field_name, lean_field_ty));
-
-        let getter_name = struct_getter_name(&lean_name, &field.name);
-        getter_defs.push(format!(
-            "@[export {getter}]\ndef {getter} (value : {ty}) : {field_ty} :=\n  value.{field_name}",
-            getter = getter_name,
-            ty = lean_name,
-            field_ty = lean_field_ty,
-            field_name = lean_field_name,
-        ));
-        getter_decls.push(format!(
-            "extern {} {getter}(lean_obj_arg value);",
-            struct_helper_return_c_type(&field.ty, registry),
-            getter = getter_name,
-        ));
     }
 
-    let constructor_body = if fields.is_empty() {
-        "{}".to_string()
-    } else {
-        format!(
-            "{{ {} }}",
-            fields
-                .iter()
-                .map(|field| {
-                    let lean_field_name = sanitize_lean_field_name(&field.name);
-                    format!("{} := {}", lean_field_name, lean_field_name)
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-
     let lean_source = format!(
-        "structure {} where\n{}\n\n@[export ffi_to_{}]\ndef ffi_to_{} {} : {} :=\n  {}\n\n{}",
+        "structure {} where\n{}",
         lean_name,
         if lean_fields.is_empty() {
             "".to_string()
         } else {
             lean_fields.join("\n")
         },
-        lean_name,
-        lean_name,
-        helper_params.join(" "),
-        lean_name,
-        constructor_body,
-        getter_defs.join("\n\n"),
     );
     lean_ctx.declare(
         format!("struct_{}", lean_name),
         lean_source.trim_end().to_string(),
     );
 
-    let ffi_to_decl = if fields.is_empty() {
-        format!("extern lean_obj_res ffi_to_{}(void);", lean_name)
-    } else {
-        format!(
-            "extern lean_obj_res ffi_to_{}({});",
-            lean_name,
-            fields
-                .iter()
-                .map(|field| struct_helper_param_c_type(&field.ty, registry))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-
-    let mut c_decl = ffi_to_decl;
-    if !getter_decls.is_empty() {
-        c_decl.push('\n');
-        c_decl.push_str(&getter_decls.join("\n"));
-    }
-    c_ctx.declare(format!("struct_{}_decl", lean_name), c_decl);
-
     Ok(lean_name)
 }
 
-fn struct_helper_param_c_type(ty: &CType, registry: &TypeRegistry) -> String {
-    if is_lean_float_type(ty, registry) {
-        "double".to_string()
-    } else {
-        "lean_obj_arg".to_string()
+fn lean_struct_field_layouts(
+    fields: &[CField],
+    registry: &TypeRegistry,
+) -> (usize, usize, Vec<LeanStructFieldLayout>) {
+    let object_field_count = fields
+        .iter()
+        .filter(|field| !is_lean_float_type(&field.ty, registry))
+        .count();
+
+    let mut next_object_index = 0;
+    let mut next_float_index = 0;
+    let layouts = fields
+        .iter()
+        .map(|field| {
+            if is_lean_float_type(&field.ty, registry) {
+                let layout = LeanStructFieldLayout::Float {
+                    scalar_index: next_float_index,
+                };
+                next_float_index += 1;
+                layout
+            } else {
+                let layout = LeanStructFieldLayout::Object {
+                    index: next_object_index,
+                };
+                next_object_index += 1;
+                layout
+            }
+        })
+        .collect();
+
+    (object_field_count, next_float_index, layouts)
+}
+
+fn lean_struct_scalar_size_expr(float_field_count: usize) -> String {
+    match float_field_count {
+        0 => "0".to_string(),
+        1 => "sizeof(double)".to_string(),
+        _ => format!("sizeof(double) * {}", float_field_count),
     }
 }
 
-fn struct_helper_return_c_type(ty: &CType, registry: &TypeRegistry) -> String {
-    if is_lean_float_type(ty, registry) {
-        "double".to_string()
-    } else {
-        "lean_obj_res".to_string()
+fn lean_struct_float_offset_expr(object_field_count: usize, scalar_index: usize) -> String {
+    match (object_field_count, scalar_index) {
+        (0, 0) => "0".to_string(),
+        (0, _) => format!("sizeof(double) * {}", scalar_index),
+        (_, 0) => format!("sizeof(void*) * {}", object_field_count),
+        (_, _) => format!(
+            "sizeof(void*) * {} + sizeof(double) * {}",
+            object_field_count, scalar_index
+        ),
     }
 }
 
@@ -2089,30 +2070,100 @@ fn prepare_struct_from_lean(
         .ok_or_else(|| "struct metadata is not available".to_string())?;
     ensure_struct_decl(lean_ctx, c_ctx, registry, ty)?;
 
-    let struct_var = name_gen.next("struct_value");
-    let mut pre = vec![format!("{} {} = {{0}};", render_c_type(ty, registry), struct_var)];
-
-    for field in fields {
+    if fields.len() == 1 {
+        let field = &fields[0];
         if field.name.is_empty() {
             return Err(format!("struct {} contains an unnamed field", lean_name));
         }
-        let getter_name = struct_getter_name(&lean_name, &field.name);
-        let arg_var = name_gen.next("struct_arg");
+
+        let struct_var = name_gen.next("struct_value");
+        let mut pre = vec![format!("{} {} = {{0}};", render_c_type(ty, registry), struct_var)];
+
+        match registry.resolve_alias_type(&field.ty) {
+            CType::Array {
+                ref element,
+                size: Some(size),
+            } => {
+                let assignment = prepare_static_array_from_lean(
+                    lean_ctx,
+                    c_ctx,
+                    registry,
+                    name_gen,
+                    lean_expr,
+                    element,
+                    size,
+                    Some(format!("{}.{}", struct_var, field.name)),
+                )?;
+                pre.extend(assignment.pre);
+            }
+            _ => {
+                let assignment = prepare_default_parameter_value(
+                    lean_ctx,
+                    c_ctx,
+                    registry,
+                    name_gen,
+                    lean_expr,
+                    &field.ty,
+                    false,
+                )?;
+                pre.extend(assignment.pre);
+                pre.push(format!(
+                    "{}.{} = {};",
+                    struct_var, field.name, assignment.expr
+                ));
+                pre.extend(assignment.post);
+            }
+        }
+
+        return Ok(PreparedValue {
+            pre,
+            expr: struct_var,
+            post: Vec::new(),
+            length_expr: None,
+        });
+    }
+
+    let (object_field_count, _, field_layouts) = lean_struct_field_layouts(fields, registry);
+
+    let struct_var = name_gen.next("struct_value");
+    let mut pre = vec![format!("{} {} = {{0}};", render_c_type(ty, registry), struct_var)];
+
+    let struct_arg = if fields.is_empty() {
+        None
+    } else {
+        let struct_arg = name_gen.next("struct_arg");
+        pre.push(format!("lean_object * {} = {};", struct_arg, lean_expr));
+        pre.push(format!("lean_inc({});", struct_arg));
+        Some(struct_arg)
+    };
+
+    for (field, layout) in fields.iter().zip(field_layouts.iter()) {
+        if field.name.is_empty() {
+            return Err(format!("struct {} contains an unnamed field", lean_name));
+        }
         let field_var = name_gen.next("field_value");
         let field_is_float = is_lean_float_type(&field.ty, registry);
-        pre.push(format!("lean_object * {} = {};", arg_var, lean_expr));
-        pre.push(format!("lean_inc({});", arg_var));
-        pre.push(format!(
-            "{} {} = {}({});",
-            if field_is_float {
-                "double"
-            } else {
-                "lean_obj_res"
-            },
-            field_var,
-            getter_name,
-            arg_var
-        ));
+        let struct_arg = struct_arg
+            .as_ref()
+            .ok_or_else(|| format!("struct {} field access requires a Lean value", lean_name))?;
+
+        match layout {
+            LeanStructFieldLayout::Object { index } => {
+                pre.push(format!(
+                    "lean_obj_res {} = lean_ctor_get({}, {});",
+                    field_var, struct_arg, index
+                ));
+                pre.push(format!("lean_inc({});", field_var));
+            }
+            LeanStructFieldLayout::Float { scalar_index } => {
+                pre.push(format!(
+                    "double {} = lean_ctor_get_float({}, {});",
+                    field_var,
+                    struct_arg,
+                    lean_struct_float_offset_expr(object_field_count, *scalar_index)
+                ));
+            }
+        }
 
         match registry.resolve_alias_type(&field.ty) {
             CType::Array {
@@ -2155,6 +2206,10 @@ fn prepare_struct_from_lean(
                 }
             }
         }
+    }
+
+    if let Some(struct_arg) = struct_arg {
+        pre.push(format!("lean_dec({});", struct_arg));
     }
 
     Ok(PreparedValue {
@@ -2831,9 +2886,44 @@ fn prepare_struct_return(
         .ok_or_else(|| "struct metadata is not available".to_string())?;
     ensure_struct_decl(lean_ctx, c_ctx, registry, ty)?;
 
-    let mut pre = Vec::new();
-    let mut field_vars = Vec::with_capacity(fields.len());
-    for field in fields {
+    if fields.len() == 1 {
+        let field = &fields[0];
+        if field.name.is_empty() {
+            return Err(format!("struct {} contains an unnamed field", lean_name));
+        }
+
+        return prepare_default_return_value(
+            lean_ctx,
+            c_ctx,
+            registry,
+            name_gen,
+            &format!("({}).{}", c_expr, field.name),
+            &field.ty,
+            true,
+        );
+    }
+
+    let (object_field_count, float_field_count, field_layouts) =
+        lean_struct_field_layouts(fields, registry);
+
+    if fields.is_empty() {
+        let result_var = name_gen.next("lean_struct");
+        return Ok(PreparedValue {
+            pre: vec![format!("lean_obj_res {} = lean_box(0);", result_var)],
+            expr: result_var,
+            post: Vec::new(),
+            length_expr: None,
+        });
+    }
+
+    let result_var = name_gen.next("lean_struct");
+    let mut pre = vec![format!(
+        "lean_obj_res {} = lean_alloc_ctor(0, {}, {});",
+        result_var,
+        object_field_count,
+        lean_struct_scalar_size_expr(float_field_count)
+    )];
+    for (field, layout) in fields.iter().zip(field_layouts.iter()) {
         if field.name.is_empty() {
             return Err(format!("struct {} contains an unnamed field", lean_name));
         }
@@ -2848,17 +2938,24 @@ fn prepare_struct_return(
             !is_lean_float_type(&field.ty, registry),
         )?;
         pre.extend(prepared.pre);
+        match layout {
+            LeanStructFieldLayout::Object { index } => {
+                pre.push(format!(
+                    "lean_ctor_set({}, {}, {});",
+                    result_var, index, prepared.expr
+                ));
+            }
+            LeanStructFieldLayout::Float { scalar_index } => {
+                pre.push(format!(
+                    "lean_ctor_set_float({}, {}, {});",
+                    result_var,
+                    lean_struct_float_offset_expr(object_field_count, *scalar_index),
+                    prepared.expr
+                ));
+            }
+        }
         pre.extend(prepared.post);
-        field_vars.push(prepared.expr);
     }
-
-    let result_var = name_gen.next("lean_struct");
-    let call = if field_vars.is_empty() {
-        format!("ffi_to_{}()", lean_name)
-    } else {
-        format!("ffi_to_{}({})", lean_name, field_vars.join(", "))
-    };
-    pre.push(format!("lean_obj_res {} = {};", result_var, call));
 
     Ok(PreparedValue {
         pre,
@@ -3027,10 +3124,3 @@ fn enum_variants(variants: &[CEnumVariant]) -> Vec<(String, i64)> {
         .collect()
 }
 
-fn struct_getter_name(struct_name: &str, field_name: &str) -> String {
-    format!(
-        "ffi_get_{}_{}",
-        sanitize_c_ident(field_name),
-        sanitize_c_ident(struct_name)
-    )
-}

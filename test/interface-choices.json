@@ -536,6 +536,71 @@
       "return_value": null
     },
     {
+      "name": "array_buffer_with_length_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "ArrayBuffer": {
+              "buffer_size": 4,
+              "terminator_expression": "%ELEM% == 0",
+              "element_conversion": null
+            }
+          }
+        },
+        {
+          "conversion_strategy": {
+            "Length": {
+              "of_param_index": 0
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "array_buffer_string_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "ArrayBuffer": {
+              "buffer_size": 4,
+              "terminator_expression": "%ELEM% == NULL",
+              "element_conversion": {
+                "String": {
+                  "nullable": false,
+                  "free": false,
+                  "free_function": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
+      "name": "array_buffer_byte_array_test",
+      "omit": false,
+      "no_io": false,
+      "parameters": [
+        {
+          "conversion_strategy": {
+            "ArrayBuffer": {
+              "buffer_size": 4,
+              "terminator_expression": "%ELEM% == 0",
+              "element_conversion": null,
+              "byte_array": true
+            }
+          }
+        }
+      ],
+      "return_value": null
+    },
+    {
       "name": "dereference_int_return",
       "omit": false,
       "no_io": false,

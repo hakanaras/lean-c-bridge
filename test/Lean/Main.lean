@@ -252,6 +252,9 @@ def test_out_params : IO Unit := do
   assert! (<- array_return_with_out_length_test) == #[]
   assert! (<- string_buffer_without_length_test) == "Hello, World! Hello, World!"
   assert! (<- string_buffer_with_length_test) == "Hello, World!"
+  assert! (<- array_buffer_with_length_test) == #[10, 20, 30]
+  assert! (<- array_buffer_string_test) == #["Alpha", "Beta"]
+  assert! (<- array_buffer_byte_array_test) == mkByteArray [5, 10]
 
 def main : IO Unit := do
   test_primitive_returns

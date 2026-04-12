@@ -65,6 +65,8 @@ pub enum ReturnEditorTarget {
     ReturnElement,
     ParamOut(usize),
     ParamOutElement(usize),
+    ParamArrayBuffer(usize),
+    ParamArrayBufferElement(usize),
 }
 
 #[derive(Clone, PartialEq)]
@@ -77,6 +79,8 @@ pub enum FormPath {
     ParamStringNullable(usize),
     ParamStringSkipFree(usize),
     ParamStringBufferSize(usize),
+    ParamArrayBufferSize(usize),
+    ParamArrayBufferTerminator(usize),
     ParamArrayNullable(usize),
     ParamArraySkipFree(usize),
     ParamArrayByteArray(usize),
@@ -464,6 +468,82 @@ impl App {
                                 path: FormPath::ParamStringBufferSize(i),
                                 indent: 2,
                             });
+                        }
+                        ParameterSpecialConversion::ArrayBuffer {
+                            buffer_size,
+                            terminator_expression,
+                            element_conversion,
+                            byte_array,
+                        } => {
+                            items.push(FormItem {
+                                label: "Buffer size".to_string(),
+                                kind: FormItemKind::TextInput {
+                                    value: buffer_size.to_string(),
+                                    enabled: !omit,
+                                },
+                                path: FormPath::ParamArrayBufferSize(i),
+                                indent: 2,
+                            });
+
+                            items.push(FormItem {
+                                label: "Terminator expression".to_string(),
+                                kind: FormItemKind::TextInput {
+                                    value: terminator_expression.clone(),
+                                    enabled: !omit,
+                                },
+                                path: FormPath::ParamArrayBufferTerminator(i),
+                                indent: 2,
+                            });
+
+                            if supports_byte_array(&self.registry, get_pointee(&param.ty)) {
+                                items.push(FormItem {
+                                    label: "Marshal as ByteArray".to_string(),
+                                    kind: FormItemKind::Checkbox {
+                                        checked: *byte_array,
+                                        enabled: !omit,
+                                    },
+                                    path: FormPath::ParamArrayByteArray(i),
+                                    indent: 2,
+                                });
+                            }
+
+                            if !byte_array {
+                                let target = ReturnEditorTarget::ParamArrayBuffer(i);
+                                let element_ty = get_pointee(&param.ty);
+                                let element_options =
+                                    return_conversion_options(element_ty, choices, &target, false);
+                                let element_selected = element_conversion
+                                    .as_deref()
+                                    .map(|conversion| {
+                                        return_conversion_to_index(conversion, &element_options)
+                                    })
+                                    .unwrap_or(0);
+
+                                items.push(FormItem {
+                                    label: "Element conversion".to_string(),
+                                    kind: FormItemKind::Selector {
+                                        options: element_options,
+                                        selected: element_selected,
+                                        enabled: !omit,
+                                    },
+                                    path: FormPath::ReturnConversionSelector(target.clone()),
+                                    indent: 2,
+                                });
+
+                                if let Some(conversion) = element_conversion.as_deref() {
+                                    push_return_conversion_items(
+                                        &mut items,
+                                        &self.registry,
+                                        choices,
+                                        conversion,
+                                        element_ty,
+                                        target,
+                                        !omit,
+                                        3,
+                                        true,
+                                    );
+                                }
+                            }
                         }
                         ParameterSpecialConversion::Array {
                             nullable,
@@ -854,17 +934,32 @@ impl App {
                 }
             }
             FormPath::ParamArrayByteArray(i) => {
-                if let Some(ParameterSpecialConversion::Array {
-                    byte_array,
-                    element_conversion,
-                    ..
-                }) = self.form_choices.parameters[*i]
+                if let Some(conversion) = self.form_choices.parameters[*i]
                     .conversion_strategy
                     .as_mut()
                 {
-                    *byte_array = checked;
-                    if checked {
-                        *element_conversion = None;
+                    match conversion {
+                        ParameterSpecialConversion::Array {
+                            byte_array,
+                            element_conversion,
+                            ..
+                        } => {
+                            *byte_array = checked;
+                            if checked {
+                                *element_conversion = None;
+                            }
+                        }
+                        ParameterSpecialConversion::ArrayBuffer {
+                            byte_array,
+                            element_conversion,
+                            ..
+                        } => {
+                            *byte_array = checked;
+                            if checked {
+                                *element_conversion = None;
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -938,6 +1033,14 @@ impl App {
                         "StringBuffer" => {
                             Some(ParameterSpecialConversion::StringBuffer { buffer_size: 1024 })
                         }
+                        "ArrayBuffer" => Some(ParameterSpecialConversion::ArrayBuffer {
+                            buffer_size: 1024,
+                            terminator_expression: default_array_buffer_terminator_expression(
+                                get_pointee(&self.functions[self.form_function_index].parameters[i].ty),
+                            ),
+                            element_conversion: None,
+                            byte_array: false,
+                        }),
                         "Array" => Some(ParameterSpecialConversion::Array {
                             nullable: false,
                             element_conversion: None,
@@ -1116,6 +1219,28 @@ impl App {
                             *buffer_size = parsed;
                         }
                     }
+                }
+            }
+            FormPath::ParamArrayBufferSize(i) => {
+                if let Some(ParameterSpecialConversion::ArrayBuffer {
+                    ref mut buffer_size,
+                    ..
+                }) = self.form_choices.parameters[i].conversion_strategy
+                {
+                    if let Ok(parsed) = value.trim().parse::<usize>() {
+                        if parsed > 0 {
+                            *buffer_size = parsed;
+                        }
+                    }
+                }
+            }
+            FormPath::ParamArrayBufferTerminator(i) => {
+                if let Some(ParameterSpecialConversion::ArrayBuffer {
+                    ref mut terminator_expression,
+                    ..
+                }) = self.form_choices.parameters[i].conversion_strategy
+                {
+                    *terminator_expression = value;
                 }
             }
             FormPath::ParamStaticExpr(i) => {
@@ -1309,11 +1434,22 @@ fn return_strategy_consumes_length(strategy: Option<&ReturnValueSpecialConversio
 
 fn parameter_provides_return_length_target(parameter: &ParameterChoices) -> bool {
     match parameter.conversion_strategy.as_ref() {
-        Some(ParameterSpecialConversion::StringBuffer { .. }) => true,
+        Some(ParameterSpecialConversion::StringBuffer { .. })
+        | Some(ParameterSpecialConversion::ArrayBuffer { .. }) => true,
         Some(ParameterSpecialConversion::Out { element_conversion }) => {
             return_strategy_consumes_length(element_conversion.as_deref())
         }
         _ => false,
+    }
+}
+
+fn target_parameter_index(target: &ReturnEditorTarget) -> Option<usize> {
+    match target {
+        ReturnEditorTarget::ParamOut(index)
+        | ReturnEditorTarget::ParamOutElement(index)
+        | ReturnEditorTarget::ParamArrayBuffer(index)
+        | ReturnEditorTarget::ParamArrayBufferElement(index) => Some(*index),
+        ReturnEditorTarget::Return | ReturnEditorTarget::ReturnElement => None,
     }
 }
 
@@ -1335,7 +1471,7 @@ fn eligible_return_length_targets(
             .iter()
             .enumerate()
             .filter(|(index, parameter)| {
-                *target != ReturnEditorTarget::ParamOut(*index)
+                target_parameter_index(target) != Some(*index)
                     && parameter_provides_return_length_target(parameter)
             })
             .map(|(index, _)| Some(index)),
@@ -1386,6 +1522,7 @@ fn param_conversion_options(
     if is_pointer(ty) {
         options.push("Reference".to_string());
         options.push("Array".to_string());
+        options.push("ArrayBuffer".to_string());
         options.push("Out".to_string());
     }
     if is_integer(ty) && !is_pointer(ty) && has_collection_conversion(param_index, params) {
@@ -1423,6 +1560,7 @@ fn strategy_provides_length(strategy: Option<&ParameterSpecialConversion>) -> bo
     match strategy {
         Some(ParameterSpecialConversion::String { .. })
         | Some(ParameterSpecialConversion::StringBuffer { .. })
+        | Some(ParameterSpecialConversion::ArrayBuffer { .. })
         | Some(ParameterSpecialConversion::Array { .. }) => true,
         Some(ParameterSpecialConversion::Reference {
             element_conversion, ..
@@ -1465,6 +1603,7 @@ fn conversion_to_index(cs: &ParameterSpecialConversion, options: &[String]) -> u
         ParameterSpecialConversion::Reference { .. } => "Reference",
         ParameterSpecialConversion::String { .. } => "String",
         ParameterSpecialConversion::StringBuffer { .. } => "StringBuffer",
+        ParameterSpecialConversion::ArrayBuffer { .. } => "ArrayBuffer",
         ParameterSpecialConversion::Array { .. } => "Array",
         ParameterSpecialConversion::Out { .. } => "Out",
         ParameterSpecialConversion::Length { .. } => "Length",
@@ -1589,6 +1728,48 @@ fn get_return_conversion_mut<'a>(
                 _ => None,
             }
         }
+        ReturnEditorTarget::ParamArrayBuffer(i) => {
+            match choices
+                .parameters
+                .get_mut(*i)?
+                .conversion_strategy
+                .as_mut()?
+            {
+                ParameterSpecialConversion::ArrayBuffer {
+                    element_conversion,
+                    ..
+                } => element_conversion.as_deref_mut(),
+                _ => None,
+            }
+        }
+        ReturnEditorTarget::ParamArrayBufferElement(i) => {
+            match choices
+                .parameters
+                .get_mut(*i)?
+                .conversion_strategy
+                .as_mut()?
+            {
+                ParameterSpecialConversion::ArrayBuffer {
+                    element_conversion,
+                    ..
+                } => match element_conversion.as_deref_mut()? {
+                    ReturnValueSpecialConversion::ArrayWithLength {
+                        element_conversion,
+                        ..
+                    }
+                    | ReturnValueSpecialConversion::NullTerminatedArray {
+                        element_conversion,
+                        ..
+                    }
+                    | ReturnValueSpecialConversion::Dereference {
+                        element_conversion, ..
+                    } => element_conversion.as_deref_mut(),
+                    ReturnValueSpecialConversion::String { .. }
+                    | ReturnValueSpecialConversion::Length { .. } => None,
+                },
+                _ => None,
+            }
+        }
     }
 }
 
@@ -1657,6 +1838,48 @@ fn set_return_conversion(
                 }
             }
         }
+        ReturnEditorTarget::ParamArrayBuffer(i) => {
+            if let Some(ParameterSpecialConversion::ArrayBuffer {
+                element_conversion,
+                ..
+            }) = choices
+                .parameters
+                .get_mut(*i)
+                .and_then(|parameter| parameter.conversion_strategy.as_mut())
+            {
+                *element_conversion = value.map(Box::new);
+            }
+        }
+        ReturnEditorTarget::ParamArrayBufferElement(i) => {
+            if let Some(ParameterSpecialConversion::ArrayBuffer {
+                element_conversion,
+                ..
+            }) = choices
+                .parameters
+                .get_mut(*i)
+                .and_then(|parameter| parameter.conversion_strategy.as_mut())
+            {
+                if let Some(conversion) = element_conversion.as_deref_mut() {
+                    match conversion {
+                        ReturnValueSpecialConversion::ArrayWithLength {
+                            element_conversion,
+                            ..
+                        }
+                        | ReturnValueSpecialConversion::NullTerminatedArray {
+                            element_conversion,
+                            ..
+                        }
+                        | ReturnValueSpecialConversion::Dereference {
+                            element_conversion, ..
+                        } => {
+                            *element_conversion = value.map(Box::new);
+                        }
+                        ReturnValueSpecialConversion::String { .. }
+                        | ReturnValueSpecialConversion::Length { .. } => {}
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1664,7 +1887,41 @@ fn nested_return_editor_target(target: &ReturnEditorTarget) -> Option<ReturnEdit
     match target {
         ReturnEditorTarget::Return => Some(ReturnEditorTarget::ReturnElement),
         ReturnEditorTarget::ParamOut(i) => Some(ReturnEditorTarget::ParamOutElement(*i)),
-        ReturnEditorTarget::ReturnElement | ReturnEditorTarget::ParamOutElement(_) => None,
+        ReturnEditorTarget::ParamArrayBuffer(i) => {
+            Some(ReturnEditorTarget::ParamArrayBufferElement(*i))
+        }
+        ReturnEditorTarget::ReturnElement
+        | ReturnEditorTarget::ParamOutElement(_)
+        | ReturnEditorTarget::ParamArrayBufferElement(_) => None,
+    }
+}
+
+fn default_array_buffer_terminator_expression(ty: Option<&CType>) -> String {
+    match ty {
+        Some(ty) if is_pointer_like(ty) => "%ELEM% == NULL".to_string(),
+        Some(ty)
+            if matches!(
+                ty,
+                CType::Void
+                    | CType::Bool
+                    | CType::Char
+                    | CType::UChar
+                    | CType::Short
+                    | CType::UShort
+                    | CType::Int
+                    | CType::UInt
+                    | CType::Long
+                    | CType::ULong
+                    | CType::LongLong
+                    | CType::ULongLong
+                    | CType::Float
+                    | CType::Double
+                    | CType::LongDouble
+                    | CType::SizeT
+                    | CType::PtrdiffT
+                    | CType::Enum(_)
+            ) => "%ELEM% == 0".to_string(),
+        _ => "false".to_string(),
     }
 }
 

@@ -807,6 +807,26 @@ static inline void string_buffer_with_length_test(char* buffer, size_t buffer_si
     buffer[buffer_size - 1] = '\0';
 }
 
+static inline void array_buffer_with_length_test(int* buffer, size_t buffer_size) {
+    assert(buffer_size == 4);
+    buffer[0] = 10;
+    buffer[1] = 20;
+    buffer[2] = 30;
+    buffer[3] = 0;
+}
+
+static inline void array_buffer_string_test(char** buffer) {
+    buffer[0] = "Alpha";
+    buffer[1] = "Beta";
+    buffer[2] = NULL;
+}
+
+static inline void array_buffer_byte_array_test(unsigned char* buffer) {
+    buffer[0] = 5;
+    buffer[1] = 10;
+    buffer[2] = 0;
+}
+
 // -- Dereference Returns --
 
 static inline int* dereference_int_return() {

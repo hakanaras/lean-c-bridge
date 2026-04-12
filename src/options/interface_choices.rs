@@ -59,6 +59,22 @@ pub enum ParameterSpecialConversion {
         /// The size of the buffer to allocate.
         buffer_size: usize,
     },
+    /// Pass an automatically allocated buffer for the original C function to write an array into, and convert it back
+    /// into a Lean Array and add it to the return value by making it a tuple. The buffer is automatically freed after the call.
+    ArrayBuffer {
+        /// The size of the buffer to allocate.
+        buffer_size: usize,
+        /// The C expression that can be used to check if an element is the terminator of the array.
+        /// The expression can use `%ELEM%` as a placeholder for the element.
+        /// For example `%ELEM% == 0` can be used for zero-terminated arrays.
+        terminator_expression: String,
+        /// Optional conversion for the individual elements of the array, using the same conversion choices as return values.
+        element_conversion: Option<Box<ReturnValueSpecialConversion>>,
+        /// Whether this should be marshalled to a `ByteArray` instead of a regular `Array`.
+        /// Only available for elements `char`, `signed char`, and `unsigned char`.
+        #[serde(default)]
+        byte_array: bool,
+    },
     /// Pass a pointer to a newly allocated array containing the elements of a Lean Array, and free it after the call
     Array {
         /// Whether to use `Option` and pass `null` when `none`.

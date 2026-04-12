@@ -63,6 +63,7 @@ struct OutParam {
     value_expr: String,
     value_strategy: Option<ReturnValueSpecialConversion>,
     lean_return_ty: String,
+    length_expr: Option<String>,
 }
 
 struct PreparedValue {
@@ -143,6 +144,44 @@ pub fn generate_function(
                     &parameter_name,
                     &parameter.ty,
                     *buffer_size,
+                ) {
+                    Ok(prepared) => prepared,
+                    Err(reason) => {
+                        emit_omitted_function(lean_ctx, c_ctx, function, &reason);
+                        return;
+                    }
+                };
+
+                if let Some(length_expr) = &prepared.length_expr {
+                    length_exprs.insert(index, length_expr.clone());
+                }
+
+                params.push(PreparedParam {
+                    lean_param: None,
+                    pre: prepared.pre,
+                    arg_expr: prepared.expr,
+                    post: prepared.post,
+                    deferred_length_of: None,
+                    out_param: Some(out_param),
+                });
+            }
+            Some(ParameterSpecialConversion::ArrayBuffer {
+                buffer_size,
+                terminator_expression,
+                element_conversion,
+                byte_array,
+            }) => {
+                let (prepared, out_param) = match prepare_array_buffer_parameter(
+                    lean_ctx,
+                    c_ctx,
+                    registry,
+                    &mut name_gen,
+                    &parameter_name,
+                    &parameter.ty,
+                    *buffer_size,
+                    terminator_expression,
+                    element_conversion.as_deref(),
+                    *byte_array,
                 ) {
                     Ok(prepared) => prepared,
                     Err(reason) => {
@@ -491,7 +530,10 @@ pub fn generate_function(
                 Some(&out_param.value_expr),
                 &out_param.value_ty,
                 out_param.value_strategy.as_ref(),
-                return_length_exprs.get(&Some(index)).map(String::as_str),
+                return_length_exprs
+                    .get(&Some(index))
+                    .map(String::as_str)
+                    .or(out_param.length_expr.as_deref()),
                 true,
             ) {
                 Ok(value) => value,
@@ -670,6 +712,7 @@ fn prepare_out_parameter(
         value_expr: name_gen.next(&format!("out_{}", parameter_name)),
         value_strategy: strategy.cloned(),
         value_ty,
+        length_expr: None,
     })
 }
 
@@ -700,6 +743,12 @@ fn lean_type_for_parameter(
                 Some(ParameterSpecialConversion::StringBuffer { .. }) => {
                     return Err(
                         "reference pointed-value conversions do not support string buffers"
+                            .to_string(),
+                    );
+                }
+                Some(ParameterSpecialConversion::ArrayBuffer { .. }) => {
+                    return Err(
+                        "reference pointed-value conversions do not support array buffers"
                             .to_string(),
                     );
                 }
@@ -741,6 +790,9 @@ fn lean_type_for_parameter(
         Some(ParameterSpecialConversion::StringBuffer { .. }) => {
             Err("string buffer parameters do not have Lean input types".to_string())
         }
+        Some(ParameterSpecialConversion::ArrayBuffer { .. }) => {
+            Err("array buffer parameters do not have Lean input types".to_string())
+        }
         Some(ParameterSpecialConversion::Array {
             nullable,
             element_conversion,
@@ -775,6 +827,7 @@ fn lean_type_for_parameter(
 
             if matches!(nested, Some(ParameterSpecialConversion::Reference { .. }))
                 || matches!(nested, Some(ParameterSpecialConversion::Array { .. }))
+                || matches!(nested, Some(ParameterSpecialConversion::ArrayBuffer { .. }))
                 || matches!(
                     nested,
                     Some(ParameterSpecialConversion::StringBuffer { .. })
@@ -1280,6 +1333,9 @@ fn prepare_parameter_value(
         Some(ParameterSpecialConversion::StringBuffer { .. }) => {
             Err("string buffer parameters are handled separately".to_string())
         }
+        Some(ParameterSpecialConversion::ArrayBuffer { .. }) => {
+            Err("array buffer parameters are handled separately".to_string())
+        }
         Some(ParameterSpecialConversion::Array {
             nullable,
             element_conversion,
@@ -1404,6 +1460,87 @@ fn prepare_string_buffer_parameter(
             value_expr: buffer_var,
             value_strategy: Some(return_strategy),
             lean_return_ty,
+            length_expr: None,
+        },
+    ))
+}
+
+fn prepare_array_buffer_parameter(
+    lean_ctx: &mut LeanContext,
+    c_ctx: &mut CContext,
+    registry: &TypeRegistry,
+    name_gen: &mut NameGen,
+    parameter_name: &str,
+    ty: &CType,
+    buffer_size: usize,
+    terminator_expression: &str,
+    element_conversion: Option<&ReturnValueSpecialConversion>,
+    byte_array: bool,
+) -> Result<(PreparedValue, OutParam), String> {
+    if buffer_size == 0 {
+        return Err("array buffer conversion requires a positive buffer size".to_string());
+    }
+    if terminator_expression.trim().is_empty() {
+        return Err("array buffer conversion requires a terminator expression".to_string());
+    }
+
+    let element_ty = registry
+        .pointer_element_type(ty)
+        .ok_or_else(|| "array buffer conversion requires a pointer parameter".to_string())?;
+
+    let return_strategy = ReturnValueSpecialConversion::ArrayWithLength {
+        nullable: false,
+        element_conversion: element_conversion.map(|conversion| Box::new(conversion.clone())),
+        free_array_after_conversion: true,
+        free_function: None,
+        byte_array,
+    };
+    let lean_return_ty =
+        lean_type_for_return(lean_ctx, c_ctx, registry, ty, Some(&return_strategy))?;
+
+    let size_var = name_gen.next(&format!("{}_array_buffer_size", parameter_name));
+    let buffer_var = name_gen.next(&format!("{}_array_buffer", parameter_name));
+    let length_var = name_gen.next(&format!("{}_array_buffer_len", parameter_name));
+    let index_var = name_gen.next("i");
+    let element_var = name_gen.next("array_elem");
+    let element_c_ty = render_c_type(&element_ty, registry);
+    let terminator_condition =
+        render_array_buffer_terminator_condition(terminator_expression, &element_var);
+
+    Ok((
+        PreparedValue {
+            pre: vec![
+                format!("size_t {} = {};", size_var, buffer_size),
+                format!("size_t {} = {};", length_var, size_var),
+                format!(
+                    "{} * {} = LEAN_FFI_CALLOC_ARRAY({}, {});",
+                    element_c_ty, buffer_var, element_c_ty, size_var
+                ),
+            ],
+            expr: buffer_var.clone(),
+            post: vec![
+                format!(
+                    "for (size_t {} = 0; {} < {}; ++{}) {{",
+                    index_var, index_var, size_var, index_var
+                ),
+                format!(
+                    "    {} {} = {}[{}];",
+                    element_c_ty, element_var, buffer_var, index_var
+                ),
+                format!("    if ({}) {{", terminator_condition),
+                format!("        {} = {};", length_var, index_var),
+                "        break;".to_string(),
+                "    }".to_string(),
+                "}".to_string(),
+            ],
+            length_expr: Some(size_var),
+        },
+        OutParam {
+            value_ty: ty.clone(),
+            value_expr: buffer_var,
+            value_strategy: Some(return_strategy),
+            lean_return_ty,
+            length_expr: Some(length_var),
         },
     ))
 }
@@ -1476,6 +1613,7 @@ fn prepare_array_parameter(
         element_strategy,
         Some(ParameterSpecialConversion::Reference { .. })
             | Some(ParameterSpecialConversion::Array { .. })
+            | Some(ParameterSpecialConversion::ArrayBuffer { .. })
             | Some(ParameterSpecialConversion::StringBuffer { .. })
             | Some(ParameterSpecialConversion::Out { .. })
     ) {
@@ -1880,6 +2018,9 @@ fn prepare_reference_storage(
         }
         Some(ParameterSpecialConversion::StringBuffer { .. }) => {
             Err("reference pointed-value conversions do not support string buffers".to_string())
+        }
+        Some(ParameterSpecialConversion::ArrayBuffer { .. }) => {
+            Err("reference pointed-value conversions do not support array buffers".to_string())
         }
         Some(ParameterSpecialConversion::Out { .. }) => {
             Err("reference pointed-value conversions do not support out conversions".to_string())
@@ -3043,6 +3184,13 @@ fn normalize_nested_strategy(
     strategy: Option<&ParameterSpecialConversion>,
 ) -> Option<&ParameterSpecialConversion> {
     strategy
+}
+
+fn render_array_buffer_terminator_condition(
+    terminator_expression: &str,
+    element_expr: &str,
+) -> String {
+    terminator_expression.replace("%ELEM%", element_expr)
 }
 
 fn ensure_byte_array_element_type(

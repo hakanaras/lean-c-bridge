@@ -130,6 +130,8 @@ def test_enums : IO Unit := do
   assert! (<- test_enum_return_invalid) == test_enum.other 999
   test_enum_take_2 test_enum.TEST_ENUM_VALUE_2
   test_enum_take_invalid (test_enum.other 999)
+  assert! (<- named_enum_return_10) == named_enum.NAMED_ENUM_VALUE_10
+  named_enum_take_1 named_enum.NAMED_ENUM_VALUE_1
 
 def test_arrays : IO Unit := do
   let bytes1 := mkByteArray [0, 1, 2, 255]

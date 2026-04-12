@@ -1086,41 +1086,67 @@ fn ensure_enum_decl(
         .map(|(name, _)| format!("  | {}", name))
         .collect::<Vec<_>>()
         .join("\n");
-    let to_arms = variant_data
-        .iter()
-        .map(|(name, value)| format!("  | {} => .{}", value, name))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let from_arms = variant_data
-        .iter()
-        .map(|(name, value)| format!("  | .{} => {}", name, value))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let inductive_body = if constructors.is_empty() {
+        "  | other (value : Int)".to_string()
+    } else {
+        format!("{}\n  | other (value : Int)", constructors)
+    };
 
     let lean_source = format!(
-        "inductive {} where\n{}\n  | other (value : Int)\n  deriving Repr, BEq\n\n@[export ffi_to_{}]\ndef ffi_to_{} (value : Int) : {} :=\n  match value with\n{}\n  | other => .other other\n\n@[export ffi_from_{}]\ndef ffi_from_{} (value : {}) : Int :=\n  match value with\n{}\n  | .other other => other",
+        "inductive {} where\n{}\n  deriving Repr, BEq",
         lean_name,
-        constructors,
-        lean_name,
-        lean_name,
-        lean_name,
-        to_arms,
-        lean_name,
-        lean_name,
-        lean_name,
-        from_arms,
+        inductive_body,
     );
     lean_ctx.declare(format!("enum_{}", lean_name), lean_source);
 
     c_ctx.declare(
-        format!("ffi_to_{}_decl", lean_name),
-        format!(
-            "extern lean_obj_res ffi_to_{}(lean_obj_arg value);\nextern lean_obj_res ffi_from_{}(lean_obj_arg value);",
-            lean_name, lean_name
-        ),
+        format!("enum_{}_helpers", sanitize_c_ident(&lean_name)),
+        render_enum_helper_source(&lean_name, &variant_data),
     );
 
     Ok(lean_name)
+}
+
+fn render_enum_helper_source(lean_name: &str, variant_data: &[(String, i64)]) -> String {
+    let helper_name = sanitize_c_ident(lean_name);
+    let other_tag = variant_data.len();
+
+    let mut to_lines = variant_data
+        .iter()
+        .enumerate()
+        .map(|(index, (_, value))| {
+            format!(
+                "    if (value == {}) {{\n        return lean_box({});\n    }}",
+                value, index
+            )
+        })
+        .collect::<Vec<_>>();
+    to_lines.push(format!(
+        "    lean_obj_res result = lean_alloc_ctor({}, 1, 0);\n    lean_ctor_set(result, 0, lean_int64_to_int(value));\n    return result;",
+        other_tag
+    ));
+
+    let mut from_cases = variant_data
+        .iter()
+        .enumerate()
+        .map(|(index, (_, value))| format!("    case {}:\n        return {};", index, value))
+        .collect::<Vec<_>>();
+    from_cases.push(format!(
+        "    case {}:\n        return (int64_t)lean_int64_of_int(lean_ctor_get(value, 0));",
+        other_tag
+    ));
+    from_cases.push(format!(
+        "    default:\n        lean_internal_panic(\"invalid constructor tag for {}\");",
+        helper_name
+    ));
+
+    format!(
+        "static inline lean_obj_res lean_ffi_enum_to_{}(int64_t value) {{\n{}\n}}\n\nstatic inline int64_t lean_ffi_enum_from_{}(b_lean_obj_arg value) {{\n    switch (lean_obj_tag(value)) {{\n{}\n    }}\n}}",
+        helper_name,
+        to_lines.join("\n"),
+        helper_name,
+        from_cases.join("\n"),
+    )
 }
 
 fn ensure_struct_decl(
@@ -2031,28 +2057,21 @@ fn prepare_enum_from_lean(
     lean_ctx: &mut LeanContext,
     c_ctx: &mut CContext,
     registry: &TypeRegistry,
-    name_gen: &mut NameGen,
+    _name_gen: &mut NameGen,
     lean_expr: &str,
     ty: &CType,
 ) -> Result<PreparedValue, String> {
     let enum_name = ensure_enum_decl(lean_ctx, c_ctx, registry, ty)?;
-    let arg_var = name_gen.next("enum_arg");
-    let int_var = name_gen.next("enum_int");
+    let helper_name = sanitize_c_ident(&enum_name);
     Ok(PreparedValue {
-        pre: vec![
-            format!("lean_object * {} = {};", arg_var, lean_expr),
-            format!("lean_inc({});", arg_var),
-            format!(
-                "lean_obj_res {} = ffi_from_{}({});",
-                int_var, enum_name, arg_var
-            ),
-        ],
+        pre: Vec::new(),
         expr: format!(
-            "({})lean_scalar_to_int64({})",
+            "({})lean_ffi_enum_from_{}({})",
             render_c_type(ty, registry),
-            int_var
+            helper_name,
+            lean_expr
         ),
-        post: vec![format!("lean_dec({});", int_var)],
+        post: Vec::new(),
         length_expr: None,
     })
 }
@@ -2854,19 +2873,13 @@ fn prepare_enum_return(
     ty: &CType,
 ) -> Result<PreparedValue, String> {
     let enum_name = ensure_enum_decl(lean_ctx, c_ctx, registry, ty)?;
-    let int_var = name_gen.next("enum_value");
+    let helper_name = sanitize_c_ident(&enum_name);
     let result_var = name_gen.next("lean_result");
     Ok(PreparedValue {
-        pre: vec![
-            format!(
-                "lean_obj_res {} = lean_int64_to_int((int64_t)({}));",
-                int_var, c_expr
-            ),
-            format!(
-                "lean_obj_res {} = ffi_to_{}({});",
-                result_var, enum_name, int_var
-            ),
-        ],
+        pre: vec![format!(
+            "lean_obj_res {} = lean_ffi_enum_to_{}((int64_t)({}));",
+            result_var, helper_name, c_expr
+        )],
         expr: result_var,
         post: Vec::new(),
         length_expr: None,

@@ -342,6 +342,12 @@ typedef enum {
     TEST_ENUM_VALUE_2
 } test_enum;
 
+typedef enum named_enum {
+    NAMED_ENUM_VALUE_1,
+    NAMED_ENUM_VALUE_2,
+    NAMED_ENUM_VALUE_10 = 10
+} named_enum;
+
 static inline test_enum test_enum_return_1() {
     return TEST_ENUM_VALUE_1;
 }
@@ -356,6 +362,14 @@ static inline void test_enum_take_2(test_enum e) {
 
 static inline void test_enum_take_invalid(test_enum e) {
     assert(e == (test_enum) 999);
+}
+
+static inline named_enum named_enum_return_10() {
+    return NAMED_ENUM_VALUE_10;
+}
+
+static inline void named_enum_take_1(named_enum e) {
+    assert(e == NAMED_ENUM_VALUE_1);
 }
 
 // -- Static Array --
